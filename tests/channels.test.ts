@@ -15,6 +15,23 @@ describe("parseChannelList", () => {
     ]);
   });
 
+  it("accepts non-Latin handles, raw or percent-encoded in a URL", () => {
+    const raw = "@ФутбольныйХейт,@оКеюш,@БританскийстильсАлександромЕла,https://www.youtube.com/@%D0%9A%D0%BE%D1%82%D0%BE%D0%BA%D1%80%D0%B0%D0%B1";
+    const { channels, invalid } = parseChannelList(raw);
+    expect(invalid).toEqual([]);
+    expect(channels.map((c) => (c.kind === "handle" ? c.handle : c.id))).toEqual([
+      "@ФутбольныйХейт",
+      "@оКеюш",
+      "@БританскийстильсАлександромЕла",
+      "@Котокраб",
+    ]);
+  });
+
+  it("still rejects handles that are too long or contain spaces or symbols", () => {
+    const { invalid } = parseChannelList("@a234567890123456789012345678901,@bad!name");
+    expect(invalid).toEqual(["@a234567890123456789012345678901", "@bad!name"]);
+  });
+
   it("drops duplicates, comparing handles case-insensitively", () => {
     const { channels } = parseChannelList(`@Fireship,@fireship,${CHANNEL_A},${CHANNEL_A}`);
     expect(channels).toHaveLength(2);

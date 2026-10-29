@@ -3,7 +3,9 @@ export type ChannelRef =
   | { kind: "handle"; handle: string; raw: string };
 
 const CHANNEL_ID = /^UC[\w-]{22}$/;
-const HANDLE = /^@[\w.-]{3,30}$/;
+// YouTube handles allow letters and digits from many scripts (e.g. @Котокраб),
+// plus underscore, hyphen, period and middle dot; 3–30 characters.
+const HANDLE = /^@[\p{L}\p{M}\p{N}_.\-·]{3,30}$/u;
 
 /**
  * Parses the YT_CHANNELS setting: entries separated by commas, newlines or

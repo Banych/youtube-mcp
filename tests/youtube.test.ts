@@ -86,6 +86,15 @@ describe("resolveChannelId", () => {
     );
   });
 
+  it("percent-encodes a non-Latin handle and caches it case-insensitively", async () => {
+    const { fetch, calls } = fakeFetch({ "https://www.youtube.com/@%D0%9A%D0%BE%D1%82%D0%BE%D0%BA%D1%80%D0%B0%D0%B1": page });
+    expect(await resolveChannelId(refs("@Котокраб")[0], { fetch })).toBe(CHANNEL_A);
+    expect(await resolveChannelId(refs("@котокраб")[0], { fetch })).toBe(CHANNEL_A);
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://www.youtube.com/@%D0%9A%D0%BE%D1%82%D0%BE%D0%BA%D1%80%D0%B0%D0%B1",
+    ]);
+  });
+
   it("returns an ID entry without any request", async () => {
     const { fetch, calls } = fakeFetch({});
     expect(await resolveChannelId(refs(CHANNEL_B)[0], { fetch })).toBe(CHANNEL_B);
