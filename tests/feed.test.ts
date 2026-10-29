@@ -19,6 +19,12 @@ describe("parseFeed", () => {
     });
   });
 
+  it("restores the UC prefix that the feed's channel ID lacks, and keeps one already present", () => {
+    expect(parseFeed(FEED_A).videos.every((v) => v.channelId === CHANNEL_A)).toBe(true);
+    const prefixed = FEED_A.replaceAll(`<yt:channelId>${CHANNEL_A.slice(2)}<`, `<yt:channelId>${CHANNEL_A}<`);
+    expect(parseFeed(prefixed).channelId).toBe(CHANNEL_A);
+  });
+
   it("marks entries whose link points at /shorts/ as Shorts", () => {
     const short = parseFeed(FEED_A).videos.find((v) => v.id === "aS");
     expect(short?.isShort).toBe(true);
