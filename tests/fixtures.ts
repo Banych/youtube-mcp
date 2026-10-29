@@ -3,7 +3,11 @@ export const CHANNEL_B = "UCbbbbbbbbbbbbbbbbbbbbbb";
 
 type Entry = { id: string; title: string; published: string; short?: boolean };
 
-/** Builds a feed shaped like youtube.com/feeds/videos.xml?channel_id=… */
+/**
+ * Builds a feed shaped like youtube.com/feeds/videos.xml?channel_id=…
+ * Like the real feeds (seen live on 2026-10-29), <yt:channelId> carries the
+ * ID without its "UC" prefix.
+ */
 export function feedXml(channelId: string, channelTitle: string, entries: Entry[]): string {
   const items = entries
     .map(
@@ -11,7 +15,7 @@ export function feedXml(channelId: string, channelTitle: string, entries: Entry[
  <entry>
   <id>yt:video:${e.id}</id>
   <yt:videoId>${e.id}</yt:videoId>
-  <yt:channelId>${channelId}</yt:channelId>
+  <yt:channelId>${channelId.slice(2)}</yt:channelId>
   <title>${e.title}</title>
   <link rel="alternate" href="https://www.youtube.com/${e.short ? "shorts/" : "watch?v="}${e.id}"/>
   <author>
@@ -31,7 +35,7 @@ export function feedXml(channelId: string, channelTitle: string, entries: Entry[
 <feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
  <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=${channelId}"/>
  <id>yt:channel:${channelId.slice(2)}</id>
- <yt:channelId>${channelId}</yt:channelId>
+ <yt:channelId>${channelId.slice(2)}</yt:channelId>
  <title>${channelTitle}</title>
  <link rel="alternate" href="https://www.youtube.com/channel/${channelId}"/>
  <published>2015-01-01T00:00:00+00:00</published>${items}

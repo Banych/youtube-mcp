@@ -42,13 +42,22 @@ function text(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
+/**
+ * YouTube's feeds give <yt:channelId> without the "UC" prefix that the
+ * channel ID has everywhere else (URLs, YT_CHANNELS). Restore it.
+ */
+function channelIdOf(value: unknown): string {
+  const id = text(value);
+  return /^[\w-]{22}$/.test(id) ? `UC${id}` : id;
+}
+
 /** Parses a YouTube channel Atom feed (youtube.com/feeds/videos.xml?channel_id=…). */
 export function parseFeed(xml: string): Feed {
   const doc = parser.parse(xml) as { feed?: Record<string, unknown> };
   const feed = doc.feed;
   if (!feed) throw new Error("not a YouTube channel feed");
 
-  const channelId = text(feed["yt:channelId"]);
+  const channelId = channelIdOf(feed["yt:channelId"]);
   const channelTitle = text(feed.title);
   const entries = (feed.entry as AtomEntry[] | undefined) ?? [];
 
@@ -63,7 +72,7 @@ export function parseFeed(xml: string): Feed {
         id,
         title: text(entry.title),
         url: alternate,
-        channelId: text(entry["yt:channelId"]) || channelId,
+        channelId: channelIdOf(entry["yt:channelId"]) || channelId,
         channelTitle: text(entry.author?.name) || channelTitle,
         published: text(entry.published),
         isShort: alternate.includes("/shorts/"),
