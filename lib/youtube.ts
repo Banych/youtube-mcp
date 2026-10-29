@@ -33,8 +33,8 @@ export async function resolveChannelId(ref: ChannelRef, deps: Deps): Promise<str
   const cached = handleCache.get(key);
   if (cached) return cached;
 
-  // The handle was validated as @[\w.-]+ by parseChannelList, so it is URL-safe.
-  const html = await get(`https://www.youtube.com/${ref.handle}`, deps, {
+  // Non-Latin handles (e.g. @Котокраб) must be percent-encoded; the @ stays literal.
+  const html = await get(`https://www.youtube.com/@${encodeURIComponent(ref.handle.slice(1))}`, deps, {
     headers: {
       "Accept-Language": "en",
       // Skips the EU cookie-consent interstitial, which has no channel ID in it.
