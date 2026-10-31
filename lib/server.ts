@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authorize } from "./auth";
 import { parseChannelList } from "./channels";
 import type { Video } from "./feed";
+import { formatForecast, getForecast, localDate, PORTO } from "./weather";
 import { describeChannels, latestUploads, type ChannelError, type Deps } from "./youtube";
 
 export type Config = {
@@ -91,6 +92,35 @@ export function createServer(getConfig: () => Config, deps: Deps) {
             ...formatErrors(errors, invalid),
           ];
           return { content: [{ type: "text", text: lines.join("\n") }] };
+        },
+      );
+
+      server.registerTool(
+        "porto_weather",
+        {
+          title: "Porto weather",
+          description:
+            "Porto's forecast for one day from Open-Meteo, in Lisbon time: the day's range and condition, then one line per " +
+            "day-strip slot (08:00–12:00, 12:00–18:00, 18:00 →) with the temperature at its middle hour, the condition and " +
+            "the highest chance of rain in the slot.",
+          inputSchema: z.object({
+            date: z.iso
+              .date()
+              .optional()
+              .describe("Local date, YYYY-MM-DD; defaults to today in Lisbon. Up to about two weeks ahead."),
+          }),
+          annotations: readOnly,
+        },
+        async ({ date }) => {
+          const day = date ?? localDate((deps.now ?? (() => new Date()))(), PORTO.timezone);
+          try {
+            return { content: [{ type: "text", text: formatForecast(await getForecast(day, deps)) }] };
+          } catch (e) {
+            return {
+              isError: true,
+              content: [{ type: "text", text: `Weather unavailable: ${e instanceof Error ? e.message : String(e)}` }],
+            };
+          }
         },
       );
     },
