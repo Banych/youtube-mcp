@@ -4,6 +4,8 @@ import { parseFeed, type Feed, type Video } from "./feed";
 export type Deps = {
   fetch: typeof fetch;
   timeoutMs?: number;
+  /** Clock for "today"; tests pin it. */
+  now?: () => Date;
 };
 
 export type ChannelError = { channel: string; error: string };

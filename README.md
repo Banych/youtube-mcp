@@ -4,20 +4,27 @@ A small remote MCP server that tells Claude what the YouTube channels you
 follow have uploaded. It reads each channel's public RSS feed
 (`youtube.com/feeds/videos.xml?channel_id=…`), so it needs no Google API key,
 no quota and no Google sign-in. It is meant to be added to claude.ai as a
-custom connector and used by the Daily brief scheduled task.
+custom connector and used by the Daily brief scheduled task. It also
+carries the brief's one other outside lookup, Porto's weather from
+Open-Meteo, because the brief's runs can't reach weather sites themselves.
 
 ## Tools
 
-Both tools are read-only.
+All three tools are read-only.
 
 | Tool | Input | Returns |
 |---|---|---|
 | `latest_uploads` | `since` (ISO 8601, optional), `limit` (1–50, default 10), `includeShorts` (default `false`) | One line per video, newest first: `2026-10-29 09:00 UTC · Channel — Title — URL`, then one `! channel: error` line per channel that could not be read |
 | `list_channels` | none | Each configured entry with its resolved channel ID, title and latest upload time; use it to check the list |
+| `porto_weather` | `date` (YYYY-MM-DD, optional; defaults to today in Lisbon) | `Porto · 2026-10-31 · 9–16°C, partly cloudy (Open-Meteo)`, then one line per day-strip slot: `18:00 → · 13°C, light showers, rain 40%` (temperature at the slot's middle hour, highest rain chance in the slot) |
 
 `since` is exclusive: a video published exactly at `since` is not returned.
 A channel that fails (network error, timeout after 8 s, removed channel) is
 reported in the output and the other channels are still returned.
+
+`porto_weather` needs no key or configuration. Open-Meteo forecasts about two
+weeks ahead; a date outside its range comes back as a tool error with
+Open-Meteo's reason.
 
 ## Configuration
 
@@ -62,8 +69,8 @@ npm run typecheck
 npm run build
 ```
 
-The tests never touch the network: feeds and channel pages come from
-fixtures through an injected `fetch`.
+The tests never touch the network: feeds, channel pages and forecasts come
+from fixtures through an injected `fetch`.
 
 ## Layout
 
@@ -71,5 +78,6 @@ fixtures through an injected `fetch`.
 - `lib/server.ts` — MCP tools (via `mcp-handler`) behind the bearer-token check.
 - `lib/youtube.ts` — handle resolution (cached), feed fetching, merging and filtering.
 - `lib/feed.ts` — Atom feed parsing.
+- `lib/weather.ts` — Open-Meteo request and the reduction to day-strip slots.
 - `lib/channels.ts` — `YT_CHANNELS` parsing and channel-ID extraction from a page.
 - `lib/auth.ts` — constant-time bearer-token check.

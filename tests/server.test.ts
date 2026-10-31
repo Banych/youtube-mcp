@@ -1,14 +1,20 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createServer, type Config } from "../lib/server";
 import { clearHandleCache } from "../lib/youtube";
-import { CHANNEL_A, CHANNEL_B, FEED_A, FEED_B, fakeFetch, feedUrl } from "./fixtures";
+import { forecastUrl } from "../lib/weather";
+import { CHANNEL_A, CHANNEL_B, FEED_A, FEED_B, fakeFetch, feedUrl, openMeteo } from "./fixtures";
 
 const TOKEN = "test-token";
 
 function setup(config: Partial<Config> = {}) {
-  const { fetch } = fakeFetch({ [feedUrl(CHANNEL_A)]: FEED_A, [feedUrl(CHANNEL_B)]: FEED_B });
+  const { fetch } = fakeFetch({
+    [feedUrl(CHANNEL_A)]: FEED_A,
+    [feedUrl(CHANNEL_B)]: FEED_B,
+    [forecastUrl("2026-10-31")]: JSON.stringify(openMeteo("2026-10-31")),
+  });
   const cfg: Config = { channels: `${CHANNEL_A},${CHANNEL_B}`, token: TOKEN, ...config };
-  return createServer(() => cfg, { fetch });
+  // 23:30 UTC on 31 Oct is still 31 Oct in Lisbon (UTC+0 in winter).
+  return createServer(() => cfg, { fetch, now: () => new Date("2026-10-31T23:30:00Z") });
 }
 
 let nextId = 1;
@@ -65,7 +71,7 @@ describe("MCP endpoint", () => {
     expect(status).toBe(401);
   });
 
-  it("lists both read-only tools", async () => {
+  it("lists the three read-only tools", async () => {
     const handler = setup();
     await rpc(handler, "initialize", {
       protocolVersion: "2025-06-18",
@@ -75,7 +81,7 @@ describe("MCP endpoint", () => {
     const { status, json } = await rpc(handler, "tools/list");
     expect(status).toBe(200);
     const tools = json.result.tools as { name: string; annotations?: { readOnlyHint?: boolean } }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["latest_uploads", "list_channels"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["latest_uploads", "list_channels", "porto_weather"]);
     expect(tools.every((t) => t.annotations?.readOnlyHint)).toBe(true);
   });
 
@@ -98,6 +104,23 @@ describe("MCP endpoint", () => {
     const result = await callTool(setup({ channels: "" }), "latest_uploads");
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("YT_CHANNELS");
+  });
+
+  it("porto_weather defaults to today in Lisbon", async () => {
+    const result = await callTool(setup(), "porto_weather");
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text.split("\n")[0]).toBe("Porto · 2026-10-31 · 9–16°C, partly cloudy (Open-Meteo)");
+  });
+
+  it("porto_weather reports an unavailable forecast as a tool error", async () => {
+    const result = await callTool(setup(), "porto_weather", { date: "2026-11-02" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Weather unavailable: Open-Meteo HTTP 404");
+  });
+
+  it("porto_weather rejects a malformed date", async () => {
+    const result = await callTool(setup(), "porto_weather", { date: "tomorrow" });
+    expect(result.isError).toBe(true);
   });
 
   it("list_channels flags entries it cannot use", async () => {

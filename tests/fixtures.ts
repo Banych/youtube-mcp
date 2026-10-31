@@ -1,3 +1,5 @@
+import type { OpenMeteo } from "../lib/weather";
+
 export const CHANNEL_A = "UCaaaaaaaaaaaaaaaaaaaaaa";
 export const CHANNEL_B = "UCbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -68,3 +70,26 @@ export function fakeFetch(routes: Record<string, string | number>) {
 }
 
 export const feedUrl = (id: string) => `https://www.youtube.com/feeds/videos.xml?channel_id=${id}`;
+
+/**
+ * Shaped like Open-Meteo's /v1/forecast response with timezone=Europe/Lisbon:
+ * local "YYYY-MM-DDTHH:00" times, one value per hour.
+ * Mornings clear, afternoons partly cloudy, evenings showery (40% at 19:00).
+ */
+export function openMeteo(date = "2026-10-31"): OpenMeteo {
+  const hours = Array.from({ length: 24 }, (_, h) => h);
+  return {
+    hourly: {
+      time: hours.map((h) => `${date}T${String(h).padStart(2, "0")}:00`),
+      temperature_2m: hours.map((h) => 10 + h / 2),
+      precipitation_probability: hours.map((h) => (h === 19 ? 40 : h === 13 ? null : 0)),
+      weather_code: hours.map((h) => (h < 12 ? 0 : h < 18 ? 2 : 80)),
+    },
+    daily: {
+      time: [date],
+      weather_code: [2],
+      temperature_2m_max: [16.4],
+      temperature_2m_min: [8.6],
+    },
+  };
+}
