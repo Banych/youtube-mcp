@@ -16,7 +16,8 @@ const readOnly = { readOnlyHint: true, openWorldHint: true } as const;
 
 function formatVideo(v: Video): string {
   const when = v.published.slice(0, 16).replace("T", " ");
-  return `${when} UTC · ${v.channelTitle} — ${v.title}${v.isShort ? " (Short)" : ""} — ${v.url}`;
+  const line = `${when} UTC · ${v.channelTitle} — ${v.title}${v.isShort ? " (Short)" : ""} — ${v.url}`;
+  return v.description ? `${line}\n    ${v.description}` : line;
 }
 
 function formatErrors(errors: ChannelError[], invalid: string[]): string[] {
@@ -34,7 +35,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
         {
           title: "Latest uploads",
           description:
-            "New videos from the configured YouTube channels, newest first. " +
+            "New videos from the configured YouTube channels, newest first, each with the start of its description on the next line. " +
             "Pass `since` (ISO 8601) to get only videos published after that time.",
           inputSchema: z.object({
             since: z.iso
