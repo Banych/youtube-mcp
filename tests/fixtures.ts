@@ -1,7 +1,7 @@
 export const CHANNEL_A = "UCaaaaaaaaaaaaaaaaaaaaaa";
 export const CHANNEL_B = "UCbbbbbbbbbbbbbbbbbbbbbb";
 
-type Entry = { id: string; title: string; published: string; short?: boolean };
+type Entry = { id: string; title: string; published: string; short?: boolean; desc?: string };
 
 /**
  * Builds a feed shaped like youtube.com/feeds/videos.xml?channel_id=…
@@ -26,7 +26,7 @@ export function feedXml(channelId: string, channelTitle: string, entries: Entry[
   <updated>${e.published}</updated>
   <media:group>
    <media:title>${e.title}</media:title>
-   <media:description>desc</media:description>
+   <media:description>${e.desc ?? ""}</media:description>
   </media:group>
  </entry>`,
     )
@@ -43,7 +43,7 @@ export function feedXml(channelId: string, channelTitle: string, entries: Entry[
 }
 
 export const FEED_A = feedXml(CHANNEL_A, "Alpha &amp; Co", [
-  { id: "a3", title: "Third", published: "2026-10-29T09:00:00+00:00" },
+  { id: "a3", title: "Third", published: "2026-10-29T09:00:00+00:00", desc: "A deep dive into the new feature.\n\nLinks: https://example.com/x\n#tips #claude" },
   { id: "a2", title: "Second &lt;draft&gt;", published: "2026-10-28T09:00:00+00:00" },
   { id: "aS", title: "A short", published: "2026-10-29T10:00:00+00:00", short: true },
 ]);

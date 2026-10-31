@@ -8,6 +8,8 @@ export type Video = {
   channelTitle: string;
   published: string;
   isShort: boolean;
+  /** Start of the video's description, cleaned up; "" when it has none. */
+  description: string;
 };
 
 export type Feed = {
@@ -32,6 +34,7 @@ type AtomEntry = {
   link?: AtomLink[];
   author?: { name?: string };
   published?: string;
+  "media:group"?: { "media:description"?: unknown };
 };
 
 function text(value: unknown): string {
@@ -40,6 +43,26 @@ function text(value: unknown): string {
     return String((value as { "#text": unknown })["#text"]);
   }
   return value == null ? "" : String(value);
+}
+
+export const DESCRIPTION_MAX = 240;
+
+/**
+ * Turns a raw description into one readable line: links and hashtag-only
+ * lines removed, whitespace collapsed, cut at a word boundary.
+ */
+export function cleanDescription(raw: string): string {
+  const oneLine = raw
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(#\S+\s*)+$/.test(line))
+    .join(" ")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (oneLine.length <= DESCRIPTION_MAX) return oneLine;
+  const cut = oneLine.slice(0, DESCRIPTION_MAX);
+  const space = cut.lastIndexOf(" ");
+  return (space > DESCRIPTION_MAX * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:–—-]+$/, "") + "…";
 }
 
 /**
@@ -76,6 +99,7 @@ export function parseFeed(xml: string): Feed {
         channelTitle: text(entry.author?.name) || channelTitle,
         published: text(entry.published),
         isShort: alternate.includes("/shorts/"),
+        description: cleanDescription(text(entry["media:group"]?.["media:description"])),
       },
     ];
   });

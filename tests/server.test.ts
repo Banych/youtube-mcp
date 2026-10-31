@@ -84,8 +84,9 @@ describe("MCP endpoint", () => {
     const lines = result.content[0].text.split("\n");
     expect(lines[0]).toBe("2 video(s) from 2/2 channel(s) since 2026-10-28T12:00:00Z");
     expect(lines[1]).toBe("2026-10-29 09:00 UTC · Alpha & Co — Third — https://www.youtube.com/watch?v=a3");
-    expect(lines[2]).toContain("Bravo — Bravo new");
-    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe("    A deep dive into the new feature. Links:");
+    expect(lines[3]).toContain("Bravo — Bravo new");
+    expect(lines).toHaveLength(4);
   });
 
   it("latest_uploads rejects a malformed since value", async () => {
