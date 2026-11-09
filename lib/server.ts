@@ -124,7 +124,12 @@ export function createServer(getConfig: () => Config, deps: Deps) {
         },
       );
     },
-    { serverInfo: { name: "youtube-uploads", version: "1.0.0" } },
+    {
+      serverInfo: { name: "youtube-uploads", version: "1.0.0" },
+      // Nothing here ever notifies, so refuse subscriptions/listen in-band rather than hold a
+      // stream open until Vercel kills the function at maxDuration (every call logged a timeout).
+      maxSubscriptions: 0,
+    },
   );
 
   return async (req: Request): Promise<Response> =>

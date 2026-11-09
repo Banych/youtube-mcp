@@ -47,10 +47,10 @@ describe("latestUploads", () => {
     const { videos, errors } = await latestUploads(
       refs(`${CHANNEL_A},${CHANNEL_B}`),
       { limit: 10, includeShorts: false },
-      { fetch },
+      { fetch, retryDelaysMs: [0, 0] },
     );
     expect(videos.map((v) => v.id)).toEqual(["a3", "a2"]);
-    expect(errors).toEqual([{ channel: CHANNEL_B, error: "HTTP 500" }]);
+    expect(errors).toEqual([{ channel: CHANNEL_B, error: "HTTP 500 (3 tries)" }]);
   });
 
   it("names a timeout plainly", async () => {
@@ -116,5 +116,49 @@ describe("describeChannels", () => {
       { channel: "@Bravo", id: CHANNEL_B, title: "Bravo", latest: "2026-10-29T08:00:00+00:00" },
       { channel: CHANNEL_A, id: CHANNEL_A, title: "Alpha & Co", latest: "2026-10-29T10:00:00+00:00" },
     ]);
+  });
+});
+
+describe("feed retries", () => {
+  /** Answers each URL with the given statuses in turn, then the feed. */
+  function flaky(statuses: Record<string, number[]>, feeds: Record<string, string>) {
+    const calls: string[] = [];
+    const left = Object.fromEntries(Object.entries(statuses).map(([u, s]) => [u, [...s]]));
+    const fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      calls.push(url);
+      const status = left[url]?.shift();
+      if (status) return new Response("", { status });
+      return new Response(feeds[url], { status: 200 });
+    }) as typeof globalThis.fetch;
+    return { fetch, calls };
+  }
+  const feeds = { [feedUrl(CHANNEL_A)]: FEED_A, [feedUrl(CHANNEL_B)]: FEED_B };
+
+  it("retries a feed that YouTube answers with 404, 429 or 5xx, then succeeds", async () => {
+    const { fetch, calls } = flaky({ [feedUrl(CHANNEL_A)]: [404, 503], [feedUrl(CHANNEL_B)]: [429] }, feeds);
+    const { videos, errors } = await latestUploads(
+      refs(`${CHANNEL_A},${CHANNEL_B}`),
+      { limit: 10, includeShorts: false },
+      { fetch, retryDelaysMs: [0, 0] },
+    );
+    expect(errors).toEqual([]);
+    expect(videos).toHaveLength(4);
+    expect(calls.filter((u) => u === feedUrl(CHANNEL_A))).toHaveLength(3);
+    expect(calls.filter((u) => u === feedUrl(CHANNEL_B))).toHaveLength(2);
+  });
+
+  it("gives up after the last retry and says how many tries it made", async () => {
+    const { fetch, calls } = flaky({ [feedUrl(CHANNEL_A)]: [404, 404, 404, 404] }, feeds);
+    const { errors } = await latestUploads(refs(CHANNEL_A), { limit: 10, includeShorts: false }, { fetch, retryDelaysMs: [0, 0] });
+    expect(errors).toEqual([{ channel: CHANNEL_A, error: "HTTP 404 (3 tries)" }]);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("does not retry an answer that will not change, such as 403", async () => {
+    const { fetch, calls } = flaky({ [feedUrl(CHANNEL_A)]: [403] }, feeds);
+    const { errors } = await latestUploads(refs(CHANNEL_A), { limit: 10, includeShorts: false }, { fetch, retryDelaysMs: [0, 0] });
+    expect(errors).toEqual([{ channel: CHANNEL_A, error: "HTTP 403" }]);
+    expect(calls).toHaveLength(1);
   });
 });
