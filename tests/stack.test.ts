@@ -522,8 +522,8 @@ describe("review round three: the remaining paths into the output", () => {
 
 describe("review round four", () => {
   it("drops blank-looking characters the format-character strip missed, and keeps real text", () => {
-    const blanks = "a\uFE0Fb\u{E0100}c\u034Fd\u3164e\u115Ff\uFFA0g\u2800h";
-    expect(cut(blanks)).toBe("abcdefgh");
+    const blanks = "a\uFE0Fb\u{E0100}c\u034Fd\u3164e\u115Ff\uFFA0g\u2800h\u180Bi\u180Fj";
+    expect(cut(blanks)).toBe("abcdefghij");
     expect(cut("Café — Привет 🚀 v16.4.2 (security)")).toBe("Café — Привет 🚀 v16.4.2 (security)");
   });
 

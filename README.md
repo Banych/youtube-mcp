@@ -41,7 +41,8 @@ needed) and asks [OSV](https://osv.dev) for advisories. Limits worth knowing:
   and npm package names must match a strict pattern or are dropped; release URLs
   are rebuilt from the validated tag; quoted text (lines starting `notes:` and
   `summary:`) and error messages are reduced to one capped line by an allow-list
-  (letters, digits, punctuation, symbols, marks, spaces), and a response that isn't valid JSON is reported as
+  (letters, digits, punctuation, symbols, marks, spaces; joiners and
+  variation selectors go too, so emoji sequences and Persian ZWNJ lose them), and a response that isn't valid JSON is reported as
   `invalid JSON` rather than quoted. The tool's description tells clients to
   treat quoted text as data.
 - A fix that exists only as a prerelease is marked `(prerelease)`; a stable fix of

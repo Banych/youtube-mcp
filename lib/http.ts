@@ -28,14 +28,15 @@ export async function get(url: string, deps: Deps, init?: RequestInit): Promise<
  * Outside text as one capped line, by allow-list: letters, digits, punctuation, symbols, marks
  * and plain spaces stay; line breaks become spaces; everything else (control and format
  * characters, private-use and unassigned code points) goes, along with the blank-looking
- * characters those classes miss: variation selectors, the combining grapheme joiner, Hangul
- * fillers and the Braille blank.
+ * characters those classes miss: variation selectors (Mongolian ones too), the combining
+ * grapheme joiner, Hangul fillers and the Braille blank. Joiners go too, so emoji sequences
+ * split and Persian ZWNJ is lost: an accepted cost for quoted text.
  */
 export function oneLine(raw: unknown, max: number): string {
   const s = String(raw ?? "")
     .replace(/[\p{Zl}\p{Zp}\r\n\t\v\f]+/gu, " ")
     .replace(/[^\p{L}\p{N}\p{P}\p{S}\p{M}\p{Zs}]/gu, "")
-    .replace(/[\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u034F\u115F\u1160\u3164\uFFA0\u2800]/gu, "")
+    .replace(/[\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u034F\u115F\u1160\u3164\uFFA0\u2800\u180B-\u180D\u180F]/gu, "")
     .replace(/\p{Zs}+/gu, " ")
     .trim();
   if (s.length <= max) return s;
