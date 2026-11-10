@@ -10,7 +10,16 @@ export type Deps = {
   log?: (line: string) => void;
   /** YouTube Data API key; when set, uploads come from the API first and the feeds are the fallback. */
   youtubeApiKey?: string;
+  /**
+   * Epoch ms by which the tool call must be done. Vercel kills the function at maxDuration
+   * (30 s) and the caller then gets nothing, so lookups shrink their timeouts and skip
+   * optional steps rather than run past it.
+   */
+  deadline?: number;
 };
+
+/** Milliseconds left before the deadline; Infinity without one. */
+export const timeLeft = (deps: Deps): number => (deps.deadline === undefined ? Infinity : deps.deadline - Date.now());
 
 /** One line per failing lookup batch, e.g. "feeds: 38/40 failed (HTTP 404 (3 tries) ×38)". */
 export function logFailures(deps: Deps, what: string, total: number, errors: string[]): void {
@@ -29,9 +38,11 @@ export class HttpError extends Error {
 
 /** GET (or the given method) with a timeout; non-2xx answers throw HttpError. */
 export async function get(url: string, deps: Deps, init?: RequestInit): Promise<string> {
+  const left = timeLeft(deps);
+  if (left <= 0) throw new Error("out of time");
   const res = await deps.fetch(url, {
     ...init,
-    signal: AbortSignal.timeout(deps.timeoutMs ?? 8000),
+    signal: AbortSignal.timeout(Math.min(deps.timeoutMs ?? 8000, left)),
   });
   if (!res.ok) throw new HttpError(res.status);
   return res.text();
@@ -81,7 +92,9 @@ export async function getWithRetry(url: string, deps: Deps): Promise<string> {
       return await get(url, deps);
     } catch (e) {
       if (!isTransient(e)) throw e;
-      if (attempt >= delays.length) throw new Error(`${(e as Error).message} (${attempt + 1} tries)`);
+      if (attempt >= delays.length || timeLeft(deps) <= delays[attempt]) {
+        throw new Error(`${(e as Error).message} (${attempt + 1} tries)`);
+      }
       await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
     }
   }

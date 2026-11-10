@@ -8,35 +8,37 @@ import { arr, obj, str } from "./json";
  * of latest_uploads or list_channels: 1 unit per channel (its uploads playlist) plus 1 per 50
  * videos for the Shorts check, against a free 10,000 units a day.
  *
- * The key is a query parameter, so URLs from here are never printed or logged: errors carry the
- * HTTP status only (see HttpError and errorMessage).
+ * The key travels in the X-Goog-Api-Key header, never in a URL, so it can't reach output, logs,
+ * fetch errors or Next's fetch trace spans (which record full URLs).
  */
 export const API_BASE = "https://www.googleapis.com/youtube/v3";
 export const UPLOADS_PER_CHANNEL = 15;
-/** Shorts can run up to 3 minutes; the API has no Shorts flag, so length decides. */
+/** Shorts run up to 3 minutes and are vertical; the API has no Shorts flag, so both decide. */
 export const SHORT_MAX_SECONDS = 180;
 
 const UC_ID = /^UC[\w-]{22}$/;
 
 /** A channel's uploads playlist is its id with "UC" replaced by "UU". */
-export function uploadsUrl(channelId: string, key: string): string {
+export function uploadsUrl(channelId: string): string {
   const params = new URLSearchParams({
     part: "snippet,contentDetails",
     maxResults: String(UPLOADS_PER_CHANNEL),
     playlistId: `UU${channelId.slice(2)}`,
-    key,
   });
   return `${API_BASE}/playlistItems?${params}`;
 }
 
-export function videosUrl(ids: string[], key: string): string {
-  const params = new URLSearchParams({ part: "contentDetails", id: ids.join(","), maxResults: "50", key });
+/** maxWidth makes the API return the player's embed size, which shows whether a video is vertical. */
+export function videosUrl(ids: string[]): string {
+  const params = new URLSearchParams({ part: "contentDetails,player", id: ids.join(","), maxResults: "50", maxWidth: "480" });
   return `${API_BASE}/videos?${params}`;
 }
 
+const withKey = (key: string): RequestInit => ({ headers: { "x-goog-api-key": key } });
+
 export async function fetchUploads(channelId: string, key: string, deps: Deps): Promise<Feed> {
   if (!UC_ID.test(channelId)) throw new Error("not a UC… channel id");
-  const items = arr(obj(JSON.parse(await get(uploadsUrl(channelId, key), deps))).items);
+  const items = arr(obj(JSON.parse(await get(uploadsUrl(channelId), deps, withKey(key)))).items);
   let channelTitle = "";
   let skipped = 0;
   const videos = items.flatMap((item): Video[] => {
@@ -70,23 +72,32 @@ export function durationSeconds(iso: string): number | null {
   return ((d * 24 + h) * 60 + min) * 60 + s;
 }
 
-/** Marks the API's videos that are Shorts by length, 50 per request; mutates them in place. */
+/**
+ * Marks the given videos that are Shorts: 3 minutes or less AND taller than wide. Length alone
+ * would hide short regular videos ("X in 100 Seconds", trailers). Batches of 50 run in parallel;
+ * a video the API says nothing about stays a regular video. Mutates the videos in place.
+ */
 export async function markShorts(videos: Video[], key: string, deps: Deps): Promise<void> {
-  for (let i = 0; i < videos.length; i += 50) {
-    const batch = videos.slice(i, i + 50);
-    const items = arr(obj(JSON.parse(await get(videosUrl(batch.map((v) => v.id), key), deps))).items);
-    const seconds = new Map<string, number | null>();
-    for (const item of items) {
-      const id = str(obj(item).id);
-      const duration = str(obj(obj(item).contentDetails).duration);
-      if (id && duration) seconds.set(id, durationSeconds(duration));
-    }
-    for (const v of batch) {
-      const s = seconds.get(v.id);
-      if (s != null && s > 0 && s <= SHORT_MAX_SECONDS) {
-        v.isShort = true;
-        v.url = `https://www.youtube.com/shorts/${v.id}`;
+  const batches: Video[][] = [];
+  for (let i = 0; i < videos.length; i += 50) batches.push(videos.slice(i, i + 50));
+  await Promise.all(
+    batches.map(async (batch) => {
+      const items = arr(obj(JSON.parse(await get(videosUrl(batch.map((v) => v.id)), deps, withKey(key)))).items);
+      const shorts = new Set<string>();
+      for (const item of items) {
+        const id = str(obj(item).id);
+        const seconds = durationSeconds(str(obj(obj(item).contentDetails).duration) ?? "");
+        const player = obj(obj(item).player);
+        const w = Number(player.embedWidth),
+          h = Number(player.embedHeight);
+        if (id && seconds != null && seconds > 0 && seconds <= SHORT_MAX_SECONDS && h > w && w > 0) shorts.add(id);
       }
-    }
-  }
+      for (const v of batch) {
+        if (shorts.has(v.id)) {
+          v.isShort = true;
+          v.url = `https://www.youtube.com/shorts/${v.id}`;
+        }
+      }
+    }),
+  );
 }

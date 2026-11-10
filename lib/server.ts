@@ -19,6 +19,9 @@ export type Config = {
 
 const readOnly = { readOnlyHint: true, openWorldHint: true } as const;
 
+/** Each tool call must finish before Vercel's 30 s maxDuration; lookups plan against this. */
+const CALL_BUDGET_MS = 25_000;
+
 function formatVideo(v: Video): string {
   const when = v.published ? `${v.published.slice(0, 16).replace("T", " ")} UTC` : "unknown time";
   const line = `${when} · ${v.channelTitle} — ${v.title}${v.isShort ? " (Short)" : ""} — ${v.url}`;
@@ -60,11 +63,11 @@ export function createServer(getConfig: () => Config, deps: Deps) {
               content: [{ type: "text", text: "No channels configured: set YT_CHANNELS on the server." }],
             };
           }
-          const youtubeApiKey = getConfig().youtubeApiKey || undefined;
+          const youtubeApiKey = getConfig().youtubeApiKey?.trim() || undefined;
           const { videos, errors, sources } = await latestUploads(
             channels,
             { since: since ? new Date(since) : undefined, limit, includeShorts },
-            { ...deps, youtubeApiKey },
+            { ...deps, youtubeApiKey, deadline: Date.now() + CALL_BUDGET_MS },
           );
           const lines = [
             `${videos.length} video(s) from ${channels.length - errors.length}/${channels.length} channel(s)` +
@@ -89,7 +92,12 @@ export function createServer(getConfig: () => Config, deps: Deps) {
         },
         async () => {
           const { channels: refs, invalid } = parseChannelList(getConfig().channels);
-          const { channels, errors } = await describeChannels(refs, { ...deps, youtubeApiKey: getConfig().youtubeApiKey || undefined });
+          const youtubeApiKey = getConfig().youtubeApiKey?.trim() || undefined;
+          const { channels, errors } = await describeChannels(refs, {
+            ...deps,
+            youtubeApiKey,
+            deadline: Date.now() + CALL_BUDGET_MS,
+          });
           const lines = [
             `${channels.length}/${refs.length} channel(s) readable`,
             ...channels.map(
@@ -160,7 +168,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
         async ({ since, packages }) => {
           const now = (deps.now ?? (() => new Date()))();
           const from = since ?? new Date(now.getTime() - 7 * 864e5).toISOString();
-          const report = await stackReport(from, packages, deps);
+          const report = await stackReport(from, packages, { ...deps, deadline: Date.now() + CALL_BUDGET_MS });
           const allFailed = report.failedRepos === Object.keys(STACK).length;
           return { ...(allFailed ? { isError: true } : {}), content: [{ type: "text", text: formatStack(report) }] };
         },

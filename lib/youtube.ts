@@ -1,7 +1,12 @@
 import { extractChannelId, type ChannelRef } from "./channels";
 import { parseFeed, type Feed, type Video } from "./feed";
 import { fetchUploads, markShorts } from "./youtube-api";
-import { errorMessage, get, getWithRetry, logFailures, type Deps } from "./http";
+
+/** Time a feed fallback needs (three 8 s tries plus waits fit only partly; one try fits). */
+const FALLBACK_MIN_MS = 9_000;
+/** Time the Shorts check needs: one round of parallel requests. */
+const SHORTS_MIN_MS = 9_000;
+import { errorMessage, get, getWithRetry, logFailures, timeLeft, type Deps } from "./http";
 
 export type ChannelError = { channel: string; error: string };
 
@@ -45,16 +50,28 @@ async function fetchChannel(ref: ChannelRef, deps: Deps, apiErrors: string[]): P
   const id = await resolveChannelId(ref, deps);
   const key = deps.youtubeApiKey;
   if (!key) return fetchFeed(id, deps);
+  let fromApi: Feed;
   try {
-    return await fetchUploads(id, key, deps);
+    fromApi = await fetchUploads(id, key, deps);
   } catch (apiError) {
     apiErrors.push(errorMessage(apiError));
+    // The feed's three tries can take 26 s; with too little time left, report rather than run out.
+    if (timeLeft(deps) < FALLBACK_MIN_MS) throw new Error(`API: ${errorMessage(apiError)}; feed: skipped, out of time`);
     try {
       return await fetchFeed(id, deps);
     } catch (feedError) {
       throw new Error(`API: ${errorMessage(apiError)}; feed: ${errorMessage(feedError)}`);
     }
   }
+  // No public uploads in the API's answer: the feed still has the channel's title, if it answers.
+  if (!fromApi.videos.length && timeLeft(deps) >= FALLBACK_MIN_MS) {
+    try {
+      return await fetchFeed(id, deps);
+    } catch {
+      return fromApi;
+    }
+  }
+  return fromApi;
 }
 
 async function fetchAll(
@@ -71,14 +88,6 @@ async function fetchAll(
   });
   if (deps.youtubeApiKey) logFailures(deps, "youtube api", refs.length, apiErrors);
   logFailures(deps, "feeds", refs.length, errors.map((e) => e.error));
-  const fromApi = feeds.filter((f) => f.feed.source === "api").flatMap((f) => f.feed.videos);
-  if (deps.youtubeApiKey && fromApi.length) {
-    try {
-      await markShorts(fromApi, deps.youtubeApiKey, deps);
-    } catch (e) {
-      (deps.log ?? console.warn)(`youtube api: Shorts check failed (${errorMessage(e)}); Shorts may be listed as videos`);
-    }
-  }
   const skipped = feeds.reduce((n, f) => n + f.feed.skipped, 0);
   if (skipped) (deps.log ?? console.warn)(`feeds: ${skipped} video(s) with a malformed id skipped`);
   return { feeds, errors };
@@ -99,11 +108,28 @@ export async function latestUploads(
   const { feeds, errors } = await fetchAll(refs, deps);
   const since = options.since?.getTime();
 
-  const videos = feeds
-    .flatMap(({ feed }) => feed.videos)
+  // A video without a readable date can be neither placed in time nor filtered by `since`.
+  const inWindow = feeds
+    .flatMap(({ feed }) => feed.videos.map((video) => ({ video, api: feed.source === "api" })))
+    .filter(({ video }) => video.published !== "" && (since === undefined || Date.parse(video.published) > since));
+
+  // The API has no Shorts flag: check only the videos that could be returned (one batch for a day's window).
+  const toCheck = inWindow.filter((x) => x.api).map((x) => x.video);
+  if (deps.youtubeApiKey && toCheck.length) {
+    const log = deps.log ?? console.warn;
+    if (timeLeft(deps) < SHORTS_MIN_MS) log("youtube api: Shorts check skipped, out of time; Shorts may be listed as videos");
+    else {
+      try {
+        await markShorts(toCheck, deps.youtubeApiKey, deps);
+      } catch (e) {
+        log(`youtube api: Shorts check failed (${errorMessage(e)}); Shorts may be listed as videos`);
+      }
+    }
+  }
+
+  const videos = inWindow
+    .map((x) => x.video)
     .filter((v) => options.includeShorts || !v.isShort)
-    // A video without a readable date can be neither placed in time nor filtered by `since`.
-    .filter((v) => v.published !== "" && (since === undefined || Date.parse(v.published) > since))
     .sort((a, b) => Date.parse(b.published) - Date.parse(a.published))
     .slice(0, options.limit);
 

@@ -75,14 +75,19 @@ every feed answered 404 at the brief's time and all 40 read fine minutes
 later (see `docs/findings/`). The API answers by key, not by IP. With a key:
 
 - `latest_uploads` and `list_channels` read each channel's uploads playlist
-  (1 unit each) and check video lengths for Shorts (1 unit per 50 videos):
-  about 50 units per call with 40 channels, against a free 10,000 a day.
-- The API has no Shorts flag, so a video of 3 minutes or less counts as a Short.
+  (1 unit each). `latest_uploads` then checks the videos it could return for
+  Shorts (1 unit per 50, in parallel; one request for a day's window): about 41
+  units per call with 40 channels, against a free 10,000 a day.
+- The API has no Shorts flag, so a Short is a video of 3 minutes or less that is
+  taller than wide (from the player's embed size). Short regular videos stay.
 - A channel the API can't read falls back to its feed; the first line of
   `latest_uploads` says how many came from each (`(YouTube API: 38, feeds: 2)`),
   and an error names both reasons only when both fail.
-- The key is a query parameter, so it is never printed or logged: errors carry
-  the HTTP status only.
+- The key is sent in the `X-Goog-Api-Key` header, never in a URL, so it can't
+  reach the output, logs, fetch errors or trace spans (Next records full URLs).
+- Each tool call plans against a 25-second budget (Vercel stops the function at
+  30): requests shorten their timeouts, and the feed fallback or the Shorts
+  check is skipped, and said so, when too little time is left.
 - The API can't return YouTube's personal recommendations: that feed is not in
   the public API.
 
