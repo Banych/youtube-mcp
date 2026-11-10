@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { oneLine } from "./http";
 
 export type Video = {
   id: string;
@@ -46,6 +47,9 @@ function text(value: unknown): string {
 }
 
 export const DESCRIPTION_MAX = 240;
+const TITLE_MAX = 200;
+/** YouTube video ids: 11 characters in practice; letters, digits, - and _. */
+const VIDEO_ID = /^[A-Za-z0-9_-]{1,32}$/;
 
 /**
  * Turns a raw description into one readable line: links and hashtag-only
@@ -80,26 +84,27 @@ export function parseFeed(xml: string): Feed {
   const feed = doc.feed;
   if (!feed) throw new Error("not a YouTube channel feed");
 
-  const channelId = channelIdOf(feed["yt:channelId"]);
-  const channelTitle = text(feed.title);
+  const channelId = oneLine(channelIdOf(feed["yt:channelId"]), 40);
+  const channelTitle = oneLine(text(feed.title), TITLE_MAX);
   const entries = (feed.entry as AtomEntry[] | undefined) ?? [];
 
   const videos = entries.flatMap((entry): Video[] => {
     const id = text(entry["yt:videoId"]);
-    if (!id) return [];
-    const alternate =
-      entry.link?.find((l) => l["@_rel"] === "alternate")?.["@_href"] ??
-      `https://www.youtube.com/watch?v=${id}`;
+    // Everything printed is rebuilt or cleaned here: ids must look like ids, URLs are built from
+    // the id, and text is one line with invisible characters removed (see oneLine).
+    if (!VIDEO_ID.test(id)) return [];
+    const isShort = !!entry.link?.find((l) => l["@_rel"] === "alternate")?.["@_href"]?.includes("/shorts/");
+    const published = text(entry.published);
     return [
       {
         id,
-        title: text(entry.title),
-        url: alternate,
-        channelId: channelIdOf(entry["yt:channelId"]) || channelId,
-        channelTitle: text(entry.author?.name) || channelTitle,
-        published: text(entry.published),
-        isShort: alternate.includes("/shorts/"),
-        description: cleanDescription(text(entry["media:group"]?.["media:description"])),
+        title: oneLine(text(entry.title), TITLE_MAX),
+        url: isShort ? `https://www.youtube.com/shorts/${id}` : `https://www.youtube.com/watch?v=${id}`,
+        channelId: oneLine(channelIdOf(entry["yt:channelId"]), 40) || channelId,
+        channelTitle: oneLine(text(entry.author?.name), TITLE_MAX) || channelTitle,
+        published: Number.isNaN(Date.parse(published)) ? "" : published,
+        isShort,
+        description: oneLine(cleanDescription(text(entry["media:group"]?.["media:description"])), DESCRIPTION_MAX + 1),
       },
     ];
   });

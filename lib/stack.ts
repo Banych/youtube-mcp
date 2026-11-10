@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { errorMessage, get, getWithRetry, oneLine, type Deps } from "./http";
+import { errorMessage, get, getWithRetry, logFailures, oneLine, type Deps } from "./http";
 
 /** The packages the Daily brief's Stack news covers, and the repo whose releases speak for each. */
 export const STACK: Record<string, string> = {
@@ -415,6 +415,7 @@ export async function stackReport(since: string, packages: PackageVersion[], dep
   await Promise.all([...feeds, osv]);
 
   report.releases.sort((a, b) => Date.parse(b.published) - Date.parse(a.published));
+  logFailures(deps, "stack", Object.keys(STACK).length + (checkable.size ? 1 : 0), report.errors.map((e) => `${e.source}: ${e.error}`));
   return report;
 }
 

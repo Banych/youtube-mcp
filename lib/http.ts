@@ -6,7 +6,18 @@ export type Deps = {
   now?: () => Date;
   /** Waits before each feed retry; tests pass zeros. */
   retryDelaysMs?: number[];
+  /** Where failure summaries go; Vercel keeps console.warn in its runtime logs. Tests capture it. */
+  log?: (line: string) => void;
 };
+
+/** One line per failing lookup batch, e.g. "feeds: 38/40 failed (HTTP 404 (3 tries) ×38)". */
+export function logFailures(deps: Deps, what: string, total: number, errors: string[]): void {
+  if (!errors.length) return;
+  const counts = new Map<string, number>();
+  for (const e of errors) counts.set(e, (counts.get(e) ?? 0) + 1);
+  const summary = [...counts].map(([e, n]) => `${e} ×${n}`).join(", ");
+  (deps.log ?? console.warn)(`${what}: ${errors.length}/${total} failed (${summary})`);
+}
 
 export class HttpError extends Error {
   constructor(readonly status: number) {

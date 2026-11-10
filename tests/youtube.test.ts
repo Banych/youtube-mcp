@@ -162,3 +162,18 @@ describe("feed retries", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("failure logging", () => {
+  it("logs one summary line when feeds fail, and nothing when they don't", async () => {
+    const lines: string[] = [];
+    const log = (l: string) => lines.push(l);
+    const { fetch } = fakeFetch({ [feedUrl(CHANNEL_A)]: FEED_A, [feedUrl(CHANNEL_B)]: 404 });
+    await latestUploads(refs(`${CHANNEL_A},${CHANNEL_B}`), { limit: 10, includeShorts: false }, { fetch, retryDelaysMs: [0, 0], log });
+    expect(lines).toEqual(["feeds: 1/2 failed (HTTP 404 (3 tries) ×1)"]);
+
+    lines.length = 0;
+    const { fetch: ok } = fakeFetch({ [feedUrl(CHANNEL_A)]: FEED_A });
+    await latestUploads(refs(CHANNEL_A), { limit: 10, includeShorts: false }, { fetch: ok, log });
+    expect(lines).toEqual([]);
+  });
+});

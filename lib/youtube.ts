@@ -1,6 +1,6 @@
 import { extractChannelId, type ChannelRef } from "./channels";
 import { parseFeed, type Feed, type Video } from "./feed";
-import { errorMessage, get, getWithRetry, type Deps } from "./http";
+import { errorMessage, get, getWithRetry, logFailures, type Deps } from "./http";
 
 export type ChannelError = { channel: string; error: string };
 
@@ -52,6 +52,7 @@ async function fetchAll(
     if (result.status === "fulfilled") feeds.push({ ref: refs[i], feed: result.value });
     else errors.push({ channel: refs[i].raw, error: errorMessage(result.reason) });
   });
+  logFailures(deps, "feeds", refs.length, errors.map((e) => e.error));
   return { feeds, errors };
 }
 

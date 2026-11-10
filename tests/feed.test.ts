@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cleanDescription, DESCRIPTION_MAX, parseFeed } from "../lib/feed";
-import { CHANNEL_A, FEED_A } from "./fixtures";
+import { CHANNEL_A, FEED_A, feedXml } from "./fixtures";
 
 describe("parseFeed", () => {
   it("reads channel and entries, decoding XML entities", () => {
@@ -61,5 +61,28 @@ describe("cleanDescription", () => {
 
   it("returns an empty string for a missing description", () => {
     expect(cleanDescription("")).toBe("");
+  });
+});
+
+describe("parseFeed cleans what it will print", () => {
+  const feed = feedXml(CHANNEL_A, "Alpha\u200b\n! FORGED", [
+    { id: "ok1", title: "Line one\n! FORGED\u202e", published: "2026-10-29T09:00:00+00:00", desc: "Text\uFE0F here" },
+    { id: "bad id/../x", title: "dropped", published: "2026-10-29T09:00:00+00:00" },
+    { id: "ok2", title: "Bad date", published: "yesterday" },
+  ]).replace("https://www.youtube.com/watch?v=ok1", "https://evil.example/watch?v=ok1");
+
+  it("collapses titles and descriptions to one line without invisible characters", () => {
+    const { channelTitle, videos } = parseFeed(feed);
+    expect(channelTitle).toBe("Alpha ! FORGED");
+    expect(videos[0].title).toBe("Line one ! FORGED");
+    expect(videos[0].description).toBe("Text here");
+  });
+
+  it("skips malformed video ids, rebuilds URLs from the id and blanks unreadable dates", () => {
+    const { videos } = parseFeed(feed);
+    expect(videos.map((v) => v.id)).toEqual(["ok1", "ok2"]);
+    expect(videos[0].url).toBe("https://www.youtube.com/watch?v=ok1");
+    expect(videos[1].published).toBe("");
+    expect(parseFeed(FEED_A).videos.find((v) => v.id === "aS")?.url).toBe("https://www.youtube.com/shorts/aS");
   });
 });

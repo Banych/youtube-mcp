@@ -5,7 +5,7 @@ import { parseChannelList } from "./channels";
 import type { Video } from "./feed";
 import { formatStack, STACK, stackReport } from "./stack";
 import { formatForecast, getForecast, localDate, PORTO } from "./weather";
-import type { Deps } from "./http";
+import { errorMessage, type Deps } from "./http";
 import { describeChannels, latestUploads, type ChannelError } from "./youtube";
 
 export type Config = {
@@ -120,7 +120,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           } catch (e) {
             return {
               isError: true,
-              content: [{ type: "text", text: `Weather unavailable: ${e instanceof Error ? e.message : String(e)}` }],
+              content: [{ type: "text", text: `Weather unavailable: ${errorMessage(e)}` }],
             };
           }
         },
