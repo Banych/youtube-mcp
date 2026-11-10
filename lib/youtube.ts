@@ -1,14 +1,6 @@
 import { extractChannelId, type ChannelRef } from "./channels";
 import { parseFeed, type Feed, type Video } from "./feed";
-
-export type Deps = {
-  fetch: typeof fetch;
-  timeoutMs?: number;
-  /** Clock for "today"; tests pin it. */
-  now?: () => Date;
-  /** Waits before each feed retry; tests pass zeros. */
-  retryDelaysMs?: number[];
-};
+import { errorMessage, get, HttpError, type Deps } from "./http";
 
 export type ChannelError = { channel: string; error: string };
 
@@ -21,12 +13,6 @@ const FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id=";
  */
 const RETRY_DELAYS_MS = [500, 1500];
 
-class HttpError extends Error {
-  constructor(readonly status: number) {
-    super(`HTTP ${status}`);
-  }
-}
-
 const isTransient = (e: unknown) => e instanceof HttpError && (e.status === 404 || e.status === 429 || e.status >= 500);
 
 /** Handle → channel ID, kept for the life of the server instance. */
@@ -34,15 +20,6 @@ const handleCache = new Map<string, string>();
 
 export function clearHandleCache(): void {
   handleCache.clear();
-}
-
-async function get(url: string, deps: Deps, init?: RequestInit): Promise<string> {
-  const res = await deps.fetch(url, {
-    ...init,
-    signal: AbortSignal.timeout(deps.timeoutMs ?? 8000),
-  });
-  if (!res.ok) throw new HttpError(res.status);
-  return res.text();
 }
 
 export async function resolveChannelId(ref: ChannelRef, deps: Deps): Promise<string> {
@@ -128,11 +105,4 @@ export async function describeChannels(
     latest: feed.videos.map((v) => v.published).sort().at(-1),
   }));
   return { channels, errors };
-}
-
-function errorMessage(reason: unknown): string {
-  if (reason instanceof Error) {
-    return reason.name === "TimeoutError" ? "timed out" : reason.message;
-  }
-  return String(reason);
 }

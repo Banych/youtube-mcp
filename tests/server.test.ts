@@ -71,7 +71,7 @@ describe("MCP endpoint", () => {
     expect(status).toBe(401);
   });
 
-  it("lists the three read-only tools", async () => {
+  it("lists the four read-only tools", async () => {
     const handler = setup();
     await rpc(handler, "initialize", {
       protocolVersion: "2025-06-18",
@@ -81,7 +81,7 @@ describe("MCP endpoint", () => {
     const { status, json } = await rpc(handler, "tools/list");
     expect(status).toBe(200);
     const tools = json.result.tools as { name: string; annotations?: { readOnlyHint?: boolean } }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["latest_uploads", "list_channels", "porto_weather"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["latest_uploads", "list_channels", "porto_weather", "stack_releases"]);
     expect(tools.every((t) => t.annotations?.readOnlyHint)).toBe(true);
   });
 
@@ -120,6 +120,20 @@ describe("MCP endpoint", () => {
 
   it("porto_weather rejects a malformed date", async () => {
     const result = await callTool(setup(), "porto_weather", { date: "tomorrow" });
+    expect(result.isError).toBe(true);
+  });
+
+  it("stack_releases defaults to the last 7 days and reports every repo it could not read", async () => {
+    const result = await callTool(setup(), "stack_releases");
+    const lines = result.content[0].text.split("\n");
+    // setup() pins the clock to 2026-10-31T23:30Z; no releases feed is in its fixtures.
+    expect(lines[0]).toBe("Stable releases since 2026-10-24T23:30:00.000Z (0/10 repos read):");
+    expect(result.content[0].text).toContain("! vercel/next.js: HTTP 404");
+    expect(result.isError).toBe(true);
+  });
+
+  it("stack_releases rejects a malformed package entry", async () => {
+    const result = await callTool(setup(), "stack_releases", { packages: [{ name: "next" }] });
     expect(result.isError).toBe(true);
   });
 

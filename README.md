@@ -5,22 +5,31 @@ follow have uploaded. It reads each channel's public RSS feed
 (`youtube.com/feeds/videos.xml?channel_id=…`), so it needs no Google API key,
 no quota and no Google sign-in. It is meant to be added to claude.ai as a
 custom connector and used by the Daily brief scheduled task. It also
-carries the brief's one other outside lookup, Porto's weather from
-Open-Meteo, because the brief's runs can't reach weather sites themselves.
+carries the brief's other outside lookups, because the brief's runs can't
+reach those sites themselves: Porto's weather from Open-Meteo, and release
+notes and security advisories for the brief's frontend stack.
 
 ## Tools
 
-All three tools are read-only.
+All four tools are read-only.
 
 | Tool | Input | Returns |
 |---|---|---|
 | `latest_uploads` | `since` (ISO 8601, optional), `limit` (1–50, default 10), `includeShorts` (default `false`) | One line per video, newest first: `2026-10-29 09:00 UTC · Channel — Title — URL`, then one `! channel: error` line per channel that could not be read |
 | `list_channels` | none | Each configured entry with its resolved channel ID, title and latest upload time; use it to check the list |
 | `porto_weather` | `date` (YYYY-MM-DD, optional; defaults to today in Lisbon) | `Porto · 2026-10-31 · 9–16°C, partly cloudy (Open-Meteo)`, then one line per day-strip slot: `18:00 → · 13°C, light showers, rain 40%` (temperature at the slot's middle hour, highest rain chance in the slot) |
+| `stack_releases` | `since` (ISO 8601, optional; defaults to 7 days ago), `packages` (optional list of `{name, version}`) | Stable releases of next, vue, nuxt, react, typescript, vite, vitest, tailwindcss, prisma and @supabase/supabase-js since that time, flagged `major` / `breaking` / `security` / `deprecation`; then, for each package version passed, its known advisories from OSV with severity and the version that fixes it |
 
 `since` is exclusive: a video published exactly at `since` is not returned.
 A channel that fails (network error, timeout after 8 s, removed channel) is
 reported in the output and the other channels are still returned.
+
+`stack_releases` reads each repo's public `releases.atom` feed (no token, no rate
+limit) and asks [OSV](https://osv.dev) for advisories. A feed holds only the
+latest 10 releases, so on a repo that publishes canaries daily (Next.js) a
+window much longer than a week can miss a stable release. Versions such as
+`^16.3.8` are read as `16.3.8`; ranges and tags like `latest` are reported as
+not checked.
 
 `porto_weather` needs no key or configuration. Open-Meteo forecasts about two
 weeks ahead; a date outside its range comes back as a tool error with
@@ -79,5 +88,7 @@ from fixtures through an injected `fetch`.
 - `lib/youtube.ts` — handle resolution (cached), feed fetching, merging and filtering.
 - `lib/feed.ts` — Atom feed parsing.
 - `lib/weather.ts` — Open-Meteo request and the reduction to day-strip slots.
+- `lib/stack.ts` — GitHub releases feeds and OSV advisories for the stack.
+- `lib/http.ts` — the shared fetch helper with its timeout.
 - `lib/channels.ts` — `YT_CHANNELS` parsing and channel-ID extraction from a page.
 - `lib/auth.ts` — constant-time bearer-token check.
