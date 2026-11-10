@@ -13,6 +13,8 @@ export type Config = {
   channels: string | undefined;
   /** Bearer token clients must send. */
   token: string | undefined;
+  /** YT_API_KEY: YouTube Data API key; optional, the feeds are used without it. */
+  youtubeApiKey?: string | undefined;
 };
 
 const readOnly = { readOnlyHint: true, openWorldHint: true } as const;
@@ -58,14 +60,16 @@ export function createServer(getConfig: () => Config, deps: Deps) {
               content: [{ type: "text", text: "No channels configured: set YT_CHANNELS on the server." }],
             };
           }
-          const { videos, errors } = await latestUploads(
+          const youtubeApiKey = getConfig().youtubeApiKey || undefined;
+          const { videos, errors, sources } = await latestUploads(
             channels,
             { since: since ? new Date(since) : undefined, limit, includeShorts },
-            deps,
+            { ...deps, youtubeApiKey },
           );
           const lines = [
             `${videos.length} video(s) from ${channels.length - errors.length}/${channels.length} channel(s)` +
-              (since ? ` since ${since}` : ""),
+              (since ? ` since ${since}` : "") +
+              (youtubeApiKey ? ` (YouTube API: ${sources.api}, feeds: ${sources.feed})` : ""),
             ...videos.map(formatVideo),
             ...formatErrors(errors, invalid),
           ];
@@ -85,7 +89,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
         },
         async () => {
           const { channels: refs, invalid } = parseChannelList(getConfig().channels);
-          const { channels, errors } = await describeChannels(refs, deps);
+          const { channels, errors } = await describeChannels(refs, { ...deps, youtubeApiKey: getConfig().youtubeApiKey || undefined });
           const lines = [
             `${channels.length}/${refs.length} channel(s) readable`,
             ...channels.map(

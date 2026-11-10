@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import { errorMessage, get, getWithRetry, logFailures, oneLine, type Deps } from "./http";
+import { arr, obj, str } from "./json";
 
 /** The packages the Daily brief's Stack news covers, and the repo whose releases speak for each. */
 export const STACK: Record<string, string> = {
@@ -220,9 +221,6 @@ type OsvAffected = { name: string; ecosystem: string; ranges: OsvRange[] };
 /** The parts of an OSV record this tool uses, validated: anything malformed is dropped, never trusted. */
 export type OsvVuln = { id: string; summary: string; aliases: string[]; severity: string | null; affected: OsvAffected[] };
 
-const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
-const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
-const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 export function readVuln(json: unknown, id: string): OsvVuln {
   const v = obj(json);

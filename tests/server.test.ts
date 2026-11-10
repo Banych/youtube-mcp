@@ -95,6 +95,14 @@ describe("MCP endpoint", () => {
     expect(lines).toHaveLength(4);
   });
 
+  it("latest_uploads names its sources when an API key is configured", async () => {
+    // No API fixtures: both channels fall back to their feeds.
+    const result = await callTool(setup({ youtubeApiKey: "AIza-test" }), "latest_uploads", { since: "2026-10-28T12:00:00Z" });
+    const first = result.content[0].text.split("\n")[0];
+    expect(first).toBe("2 video(s) from 2/2 channel(s) since 2026-10-28T12:00:00Z (YouTube API: 0, feeds: 2)");
+    expect(result.content[0].text).not.toContain("AIza-test");
+  });
+
   it("latest_uploads rejects a malformed since value", async () => {
     const result = await callTool(setup(), "latest_uploads", { since: "yesterday" });
     expect(result.isError).toBe(true);

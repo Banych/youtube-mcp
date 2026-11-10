@@ -1,5 +1,6 @@
 import { extractChannelId, type ChannelRef } from "./channels";
 import { parseFeed, type Feed, type Video } from "./feed";
+import { fetchUploads, markShorts } from "./youtube-api";
 import { errorMessage, get, getWithRetry, logFailures, type Deps } from "./http";
 
 export type ChannelError = { channel: string; error: string };
@@ -39,30 +40,62 @@ export async function fetchFeed(channelId: string, deps: Deps): Promise<Feed> {
   return parseFeed(await getWithRetry(FEED_URL + channelId, deps));
 }
 
+/** API first when a key is set, the channel's feed when the API fails or there is no key. */
+async function fetchChannel(ref: ChannelRef, deps: Deps, apiErrors: string[]): Promise<Feed> {
+  const id = await resolveChannelId(ref, deps);
+  const key = deps.youtubeApiKey;
+  if (!key) return fetchFeed(id, deps);
+  try {
+    return await fetchUploads(id, key, deps);
+  } catch (apiError) {
+    apiErrors.push(errorMessage(apiError));
+    try {
+      return await fetchFeed(id, deps);
+    } catch (feedError) {
+      throw new Error(`API: ${errorMessage(apiError)}; feed: ${errorMessage(feedError)}`);
+    }
+  }
+}
+
 async function fetchAll(
   refs: ChannelRef[],
   deps: Deps,
 ): Promise<{ feeds: { ref: ChannelRef; feed: Feed }[]; errors: ChannelError[] }> {
-  const results = await Promise.allSettled(
-    refs.map(async (ref) => fetchFeed(await resolveChannelId(ref, deps), deps)),
-  );
+  const apiErrors: string[] = [];
+  const results = await Promise.allSettled(refs.map((ref) => fetchChannel(ref, deps, apiErrors)));
   const feeds: { ref: ChannelRef; feed: Feed }[] = [];
   const errors: ChannelError[] = [];
   results.forEach((result, i) => {
     if (result.status === "fulfilled") feeds.push({ ref: refs[i], feed: result.value });
     else errors.push({ channel: refs[i].raw, error: errorMessage(result.reason) });
   });
+  if (deps.youtubeApiKey) logFailures(deps, "youtube api", refs.length, apiErrors);
   logFailures(deps, "feeds", refs.length, errors.map((e) => e.error));
+  const fromApi = feeds.filter((f) => f.feed.source === "api").flatMap((f) => f.feed.videos);
+  if (deps.youtubeApiKey && fromApi.length) {
+    try {
+      await markShorts(fromApi, deps.youtubeApiKey, deps);
+    } catch (e) {
+      (deps.log ?? console.warn)(`youtube api: Shorts check failed (${errorMessage(e)}); Shorts may be listed as videos`);
+    }
+  }
   const skipped = feeds.reduce((n, f) => n + f.feed.skipped, 0);
   if (skipped) (deps.log ?? console.warn)(`feeds: ${skipped} video(s) with a malformed id skipped`);
   return { feeds, errors };
 }
 
+export type SourceCounts = { api: number; feed: number };
+
+const countSources = (feeds: { feed: Feed }[]): SourceCounts => ({
+  api: feeds.filter((f) => f.feed.source === "api").length,
+  feed: feeds.filter((f) => f.feed.source === "feed").length,
+});
+
 export async function latestUploads(
   refs: ChannelRef[],
   options: { since?: Date; limit: number; includeShorts: boolean },
   deps: Deps,
-): Promise<{ videos: Video[]; errors: ChannelError[] }> {
+): Promise<{ videos: Video[]; errors: ChannelError[]; sources: SourceCounts }> {
   const { feeds, errors } = await fetchAll(refs, deps);
   const since = options.since?.getTime();
 
@@ -74,7 +107,7 @@ export async function latestUploads(
     .sort((a, b) => Date.parse(b.published) - Date.parse(a.published))
     .slice(0, options.limit);
 
-  return { videos, errors };
+  return { videos, errors, sources: countSources(feeds) };
 }
 
 export async function describeChannels(

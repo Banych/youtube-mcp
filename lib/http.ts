@@ -8,6 +8,8 @@ export type Deps = {
   retryDelaysMs?: number[];
   /** Where failure summaries go; Vercel keeps console.warn in its runtime logs. Tests capture it. */
   log?: (line: string) => void;
+  /** YouTube Data API key; when set, uploads come from the API first and the feeds are the fallback. */
+  youtubeApiKey?: string;
 };
 
 /** One line per failing lookup batch, e.g. "feeds: 38/40 failed (HTTP 404 (3 tries) ×38)". */
