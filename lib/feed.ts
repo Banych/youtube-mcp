@@ -19,7 +19,39 @@ export type Feed = {
   videos: Video[];
   /** Entries dropped because their video id was malformed. */
   skipped: number;
+  /** Where the videos came from: the channel's Atom feed or the YouTube Data API. */
+  source: "feed" | "api";
 };
+
+/** One video as read from a source, before anything is cleaned. */
+export type RawVideo = {
+  id: string;
+  title: string;
+  description: string;
+  channelId: string;
+  channelTitle: string;
+  published: string;
+  isShort: boolean;
+};
+
+/**
+ * The one place a video is built for printing, whatever the source: ids must look like ids,
+ * URLs are built from the id, dates must be strict ISO, and text is one line with invisible
+ * characters removed (see oneLine). Returns null for a malformed id.
+ */
+export function cleanVideo(raw: RawVideo, fallback: { channelId: string; channelTitle: string }): Video | null {
+  if (!VIDEO_ID.test(raw.id)) return null;
+  return {
+    id: raw.id,
+    title: oneLine(raw.title, TITLE_MAX) || "(untitled)",
+    url: raw.isShort ? `https://www.youtube.com/shorts/${raw.id}` : `https://www.youtube.com/watch?v=${raw.id}`,
+    channelId: oneLine(raw.channelId, 40) || fallback.channelId,
+    channelTitle: oneLine(raw.channelTitle, TITLE_MAX) || fallback.channelTitle,
+    published: isoUtc(raw.published),
+    isShort: raw.isShort,
+    description: oneLine(cleanDescription(raw.description), DESCRIPTION_MAX + 1),
+  };
+}
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -100,27 +132,21 @@ export function parseFeed(xml: string): Feed {
 
   let skipped = 0;
   const videos = entries.flatMap((entry): Video[] => {
-    const id = text(entry["yt:videoId"]);
-    // Everything printed is rebuilt or cleaned here: ids must look like ids, URLs are built from
-    // the id, and text is one line with invisible characters removed (see oneLine).
-    if (!VIDEO_ID.test(id)) {
-      skipped++;
-      return [];
-    }
-    const isShort = !!entry.link?.find((l) => l["@_rel"] === "alternate")?.["@_href"]?.includes("/shorts/");
-    return [
+    const video = cleanVideo(
       {
-        id,
-        title: oneLine(text(entry.title), TITLE_MAX) || "(untitled)",
-        url: isShort ? `https://www.youtube.com/shorts/${id}` : `https://www.youtube.com/watch?v=${id}`,
-        channelId: oneLine(channelIdOf(entry["yt:channelId"]), 40) || channelId,
-        channelTitle: oneLine(text(entry.author?.name), TITLE_MAX) || channelTitle,
-        published: isoUtc(text(entry.published)),
-        isShort,
-        description: oneLine(cleanDescription(text(entry["media:group"]?.["media:description"])), DESCRIPTION_MAX + 1),
+        id: text(entry["yt:videoId"]),
+        title: text(entry.title),
+        description: text(entry["media:group"]?.["media:description"]),
+        channelId: channelIdOf(entry["yt:channelId"]),
+        channelTitle: text(entry.author?.name),
+        published: text(entry.published),
+        isShort: !!entry.link?.find((l) => l["@_rel"] === "alternate")?.["@_href"]?.includes("/shorts/"),
       },
-    ];
+      { channelId, channelTitle },
+    );
+    if (!video) skipped++;
+    return video ? [video] : [];
   });
 
-  return { channelId, channelTitle, videos, skipped };
+  return { channelId, channelTitle, videos, skipped, source: "feed" };
 }

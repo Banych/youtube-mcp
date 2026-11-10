@@ -58,6 +58,7 @@ Open-Meteo's reason.
 |---|---|
 | `MCP_TOKEN` | Bearer token every request must carry. With it unset, the server refuses all requests (500), so a deployment without it is never open. |
 | `YT_CHANNELS` | Channels to watch, separated by commas or newlines: channel IDs (`UC…`), `@handles`, or `youtube.com/channel/…` / `youtube.com/@…` URLs. |
+| `YT_API_KEY` | Optional. A YouTube Data API v3 key. When set, uploads come from the API first and each channel's feed is only the fallback. Mark it Sensitive in Vercel. |
 
 Channel IDs are the most reliable. A handle is resolved by loading the
 channel's page once per server instance; if YouTube serves a consent or
@@ -67,13 +68,40 @@ to its ID (`list_channels` prints the ID of every handle that did resolve).
 Shorts are recognised by their feed link pointing at `/shorts/`. That is how
 YouTube's feeds mark them today; it is not a documented contract.
 
+### Why `YT_API_KEY`
+
+The feeds sometimes refuse Vercel's shared servers: on Nov 9 and 10, 2026,
+every feed answered 404 at the brief's time and all 40 read fine minutes
+later (see `docs/findings/`). The API answers by key, not by IP. With a key:
+
+- `latest_uploads` and `list_channels` read each channel's uploads playlist
+  (1 unit each). `latest_uploads` then checks the videos it could return for
+  Shorts (1 unit per 50, in parallel; one request for a day's window): about 41
+  units per call with 40 channels, against a free 10,000 a day.
+- The API has no Shorts flag, so a Short is a video of 3 minutes or less that is
+  taller than wide (from the player's embed size). Short regular videos stay.
+- A channel the API can't read falls back to its feed; the first line of
+  `latest_uploads` says how many came from each (`(YouTube API: 38, feeds: 2)`),
+  and an error names both reasons only when both fail.
+- The key is sent in the `X-Goog-Api-Key` header, never in a URL, so it can't
+  reach the output, logs, fetch errors or trace spans (Next records full URLs).
+- Each tool call plans against a 25-second budget (Vercel stops the function at
+  30): requests shorten their timeouts, and the feed fallback or the Shorts
+  check is skipped, and said so, when too little time is left.
+- The API can't return YouTube's personal recommendations: that feed is not in
+  the public API.
+
+To create one: Google Cloud console → new project → APIs & Services → Library →
+"YouTube Data API v3" → Enable; then Credentials → Create credentials → API key,
+and restrict it to the YouTube Data API v3.
+
 ## Deploy on Vercel
 
 1. Import this repository in Vercel (Add New → Project). No build settings
    need changing.
 2. Under Settings → Environment Variables, add `MCP_TOKEN` (generate one with
    `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`)
-   and `YT_CHANNELS`. Redeploy after changing either.
+   and `YT_CHANNELS` (and optionally `YT_API_KEY`). Redeploy after changing any.
 3. The endpoint is `https://<project>.vercel.app/api/mcp`.
 
 ## Add it to Claude
@@ -108,4 +136,6 @@ from fixtures through an injected `fetch`.
 - `lib/stack.ts` — GitHub releases feeds and OSV advisories for the stack.
 - `lib/http.ts` — the shared fetch helper with its timeout.
 - `lib/channels.ts` — `YT_CHANNELS` parsing and channel-ID extraction from a page.
+- `lib/youtube-api.ts` — the YouTube Data API: uploads playlists and the Shorts length check.
+- `lib/json.ts` — reading outside JSON without trusting its shape.
 - `lib/auth.ts` — constant-time bearer-token check.

@@ -8,7 +8,18 @@ export type Deps = {
   retryDelaysMs?: number[];
   /** Where failure summaries go; Vercel keeps console.warn in its runtime logs. Tests capture it. */
   log?: (line: string) => void;
+  /** YouTube Data API key; when set, uploads come from the API first and the feeds are the fallback. */
+  youtubeApiKey?: string;
+  /**
+   * Epoch ms by which the tool call must be done. Vercel kills the function at maxDuration
+   * (30 s) and the caller then gets nothing, so lookups shrink their timeouts and skip
+   * optional steps rather than run past it.
+   */
+  deadline?: number;
 };
+
+/** Milliseconds left before the deadline; Infinity without one. */
+export const timeLeft = (deps: Deps): number => (deps.deadline === undefined ? Infinity : deps.deadline - Date.now());
 
 /** One line per failing lookup batch, e.g. "feeds: 38/40 failed (HTTP 404 (3 tries) ×38)". */
 export function logFailures(deps: Deps, what: string, total: number, errors: string[]): void {
@@ -27,12 +38,18 @@ export class HttpError extends Error {
 
 /** GET (or the given method) with a timeout; non-2xx answers throw HttpError. */
 export async function get(url: string, deps: Deps, init?: RequestInit): Promise<string> {
-  const res = await deps.fetch(url, {
-    ...init,
-    signal: AbortSignal.timeout(deps.timeoutMs ?? 8000),
-  });
-  if (!res.ok) throw new HttpError(res.status);
-  return res.text();
+  const left = timeLeft(deps);
+  if (left <= 0) throw new Error("out of time");
+  const timeout = deps.timeoutMs ?? 8000;
+  try {
+    const res = await deps.fetch(url, { ...init, signal: AbortSignal.timeout(Math.min(timeout, left)) });
+    if (!res.ok) throw new HttpError(res.status);
+    return await res.text();
+  } catch (e) {
+    // Cut short by the call's budget rather than by a slow server: say so.
+    if (left < timeout && e instanceof Error && e.name === "TimeoutError") throw new Error("out of time");
+    throw e;
+  }
 }
 
 /**
@@ -79,7 +96,10 @@ export async function getWithRetry(url: string, deps: Deps): Promise<string> {
       return await get(url, deps);
     } catch (e) {
       if (!isTransient(e)) throw e;
-      if (attempt >= delays.length) throw new Error(`${(e as Error).message} (${attempt + 1} tries)`);
+      // A retry needs its wait plus about a second for the request itself.
+      if (attempt >= delays.length || timeLeft(deps) <= delays[attempt] + 1000) {
+        throw new Error(`${(e as Error).message} (${attempt + 1} tries)`);
+      }
       await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
     }
   }

@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 const handler = createServer(
-  () => ({ channels: process.env.YT_CHANNELS, token: process.env.MCP_TOKEN }),
+  () => ({ channels: process.env.YT_CHANNELS, token: process.env.MCP_TOKEN, youtubeApiKey: process.env.YT_API_KEY }),
   { fetch },
 );
 
