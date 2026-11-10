@@ -106,6 +106,7 @@ export function plainText(html: string): string {
  */
 export function cut(raw: unknown): string {
   const s = String(raw ?? "")
+    .replace(/[\p{Cf}\p{Co}\p{Cn}]/gu, "")
     .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, " ")
     .trim();
   if (s.length <= SUMMARY_MAX) return s;
@@ -120,6 +121,8 @@ const FIX_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]{1,40})?$/;
 const ADVISORY_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,63}$/;
 /** GitHub's severity words, or a CVSS vector. */
 const SEVERITY_WORD = /^(LOW|MODERATE|MEDIUM|HIGH|CRITICAL)$/;
+/** npm package names: optional @scope/, lowercase, as npm itself allows. */
+export const NPM_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 const CVSS_VECTOR = /^CVSS:\d\.\d(\/[A-Za-z]{1,3}:[A-Za-z]{1,3}){1,30}$/;
 
 /** "16.4.1" or "15.0.0-canary.5" → "16.4.1" / "15.0.0"; anything else → null. */
@@ -171,6 +174,8 @@ export type ParsedFeed = {
   oldest: number | null;
   /** Entries skipped because their date could not be read. */
   badDates: number;
+  /** Entries skipped because no link pointed into this repo's releases. */
+  badLinks: number;
 };
 
 /** Stable releases published at or after `since`; times compared as instants, not as text. */
@@ -179,7 +184,7 @@ export function parseReleases(xml: string, pkg: string, repo: string, since: str
   if (!doc.feed) throw new Error("not a releases feed");
   const sinceMs = Date.parse(since);
   const entries = doc.feed.entry ?? [];
-  const parsed: ParsedFeed = { releases: [], entries: entries.length, oldest: null, badDates: 0 };
+  const parsed: ParsedFeed = { releases: [], entries: entries.length, oldest: null, badDates: 0, badLinks: 0 };
   for (const e of entries) {
     const t = Date.parse(e.updated ?? "");
     if (Number.isNaN(t)) {
@@ -188,10 +193,16 @@ export function parseReleases(xml: string, pkg: string, repo: string, since: str
     }
     parsed.oldest = parsed.oldest === null ? t : Math.min(parsed.oldest, t);
     const prefix = `https://github.com/${repo}/releases/tag/`;
-    const url = e.link?.find((l) => l["@_href"]?.startsWith(prefix))?.["@_href"] ?? "";
-    const tag = tagOf(url);
+    const href = e.link?.find((l) => l["@_href"]?.toLowerCase().startsWith(prefix.toLowerCase()))?.["@_href"];
+    if (!href) {
+      parsed.badLinks++;
+      continue;
+    }
+    const tag = tagOf(href);
     const version = stableVersion(tag, pkg);
     if (!version || t < sinceMs) continue;
+    // Printed from the validated tag only, so nothing after it in the feed's link reaches the output.
+    const url = prefix + encodeURIComponent(tag);
     const notes = plainText(text(e.content));
     parsed.releases.push({
       pkg,
@@ -372,9 +383,13 @@ export async function stackReport(since: string, packages: PackageVersion[], dep
   const sinceMs = Date.parse(since);
   const checkable = new Map<string, PackageVersion>();
   for (const p of packages) {
+    if (!NPM_NAME.test(p.name)) {
+      report.errors.push({ source: cut(p.name), error: "not an npm package name, not checked" });
+      continue;
+    }
     const version = exactVersion(p.version);
     if (version) checkable.set(`${p.name}@${version}`, { name: p.name, version });
-    else report.errors.push({ source: `${p.name}@${p.version}`, error: "not an exact version (x.y.z), not checked" });
+    else report.errors.push({ source: `${p.name}@${cut(p.version)}`, error: "not an exact version (x.y.z), not checked" });
   }
   report.checked = checkable.size;
 
@@ -382,6 +397,12 @@ export async function stackReport(since: string, packages: PackageVersion[], dep
     try {
       const feed = parseReleases(await getWithRetry(releasesFeedUrl(repo), deps), pkg, repo, since);
       report.releases.push(...feed.releases);
+      if (feed.badLinks) {
+        report.errors.push({
+          source: repo,
+          error: `${feed.badLinks} of ${feed.entries} entr(y/ies) had no link into this repo's releases and were skipped`,
+        });
+      }
       if (feed.badDates) {
         report.errors.push({ source: repo, error: `${feed.badDates} entr(y/ies) with an unreadable date skipped` });
       }

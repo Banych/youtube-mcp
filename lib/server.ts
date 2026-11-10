@@ -3,7 +3,7 @@ import { z } from "zod";
 import { authorize } from "./auth";
 import { parseChannelList } from "./channels";
 import type { Video } from "./feed";
-import { formatStack, STACK, stackReport } from "./stack";
+import { formatStack, NPM_NAME, STACK, stackReport } from "./stack";
 import { formatForecast, getForecast, localDate, PORTO } from "./weather";
 import type { Deps } from "./http";
 import { describeChannels, latestUploads, type ChannelError } from "./youtube";
@@ -143,7 +143,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
             packages: z
               .array(
                 z.object({
-                  name: z.string().min(1).max(214).describe("npm package name, e.g. next"),
+                  name: z.string().min(1).max(214).regex(NPM_NAME).describe("npm package name, e.g. next"),
                   version: z.string().min(1).max(64).describe("Version in use, e.g. 16.3.8 (a leading ^ or ~ is ignored)"),
                 }),
               )

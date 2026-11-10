@@ -135,6 +135,8 @@ describe("MCP endpoint", () => {
   it("stack_releases rejects a malformed package entry", async () => {
     const result = await callTool(setup(), "stack_releases", { packages: [{ name: "next" }] });
     expect(result.isError).toBe(true);
+    const badName = await callTool(setup(), "stack_releases", { packages: [{ name: "Next JS", version: "16.3.8" }] });
+    expect(badName.isError).toBe(true);
   });
 
   it("list_channels flags entries it cannot use", async () => {

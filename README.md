@@ -36,11 +36,13 @@ needed) and asks [OSV](https://osv.dev) for advisories. Limits worth knowing:
   read as `16.3.8`; ranges and tags like `latest` are listed as not checked.
 - Details are fetched for up to 50 advisories; any beyond that are still listed by
   id. An advisory whose details fail is listed with the error.
-- Everything from GitHub and OSV is validated before it is printed: ids,
-  versions and severities must match a strict pattern or are dropped, and quoted
-  text (lines starting `notes:` and `summary:`) is collapsed to one capped line,
-  so it can't start a line of the tool's own output. The tool's description
-  tells clients to treat quoted text as data.
+- Outside values are checked before they are printed: ids, versions, severities
+  and npm package names must match a strict pattern or are dropped; release URLs
+  are rebuilt from the validated tag; quoted text (lines starting `notes:` and
+  `summary:`) and error messages are collapsed to one capped line with invisible
+  characters removed, and a response that isn't valid JSON is reported as
+  `invalid JSON` rather than quoted. The tool's description tells clients to
+  treat quoted text as data.
 - A fix that exists only as a prerelease is marked `(prerelease)`; a stable fix of
   the same version is preferred.
 

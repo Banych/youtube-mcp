@@ -450,3 +450,72 @@ describe("outside data is validated at the boundary", () => {
     expect(text).toContain("fixed in 16.1.0-canary.4 (prerelease)");
   });
 });
+
+describe("review round three: the remaining paths into the output", () => {
+  it("turns a non-JSON answer into 'invalid JSON' instead of quoting its body", async () => {
+    const { fetch } = fakeFetch({
+      [OSV_BATCH_URL]: JSON.stringify({ results: [{ vulns: [{ id: "GHSA-aaaa-bbbb-cccc" }] }] }),
+      [osvVulnUrl("GHSA-aaaa-bbbb-cccc")]: "\n! FORGED LINE\nrest",
+    });
+    const report = await stackReport(SINCE, [{ name: "next", version: "16.3.8" }], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.advisories[0].summary).toBe("details unavailable (invalid JSON)");
+
+    const { fetch: brokenBatch } = fakeFetch({ [OSV_BATCH_URL]: "\n! FORGED LINE" });
+    const text = formatStack(await stackReport(SINCE, [{ name: "next", version: "16.3.8" }], { fetch: brokenBatch, retryDelaysMs: [0, 0] }));
+    expect(text).toContain("! OSV advisories: invalid JSON");
+    expect(text.split("\n").some((l) => l.startsWith("! FORGED"))).toBe(false);
+  });
+
+  it("removes invisible format characters from quoted text", () => {
+    const hidden = "Fix\u200b \u202eeslaf\u202c " + String.fromCodePoint(0xe0041, 0xe0042) + "done";
+    expect(cut(hidden)).toBe("Fix eslaf done");
+  });
+
+  it("prints a release URL built from the validated tag, not the feed's link", () => {
+    const feed = releasesFeed("vercel/next.js", [
+      { tag: "v16.4.2", updated: "2026-11-05T10:00:00Z", html: "<p>x</p>" },
+    ]).replace("releases/tag/v16.4.2", "releases/tag/v16.4.2/releases/tag/x%0A!%20FORGED");
+    const [rel] = parseReleases(feed, "next", "vercel/next.js", SINCE).releases;
+    expect(rel.url).toBe("https://github.com/vercel/next.js/releases/tag/v16.4.2");
+  });
+
+  it("matches the repo name case-insensitively and reports entries without a usable link", () => {
+    const cased = releasesFeed("Microsoft/typescript", [
+      { tag: "v5.9.3", updated: "2026-11-05T10:00:00Z", html: "<p>x</p>" },
+    ]);
+    const parsed = parseReleases(cased, "typescript", "microsoft/TypeScript", SINCE);
+    expect(parsed.releases.map((r) => r.version)).toEqual(["5.9.3"]);
+    expect(parsed.releases[0].url).toBe("https://github.com/microsoft/TypeScript/releases/tag/v5.9.3");
+
+    const elsewhere = releasesFeed("someone/else", [{ tag: "v1.0.0", updated: "2026-11-05T10:00:00Z", html: "" }]);
+    expect(parseReleases(elsewhere, "typescript", "microsoft/TypeScript", SINCE).badLinks).toBe(1);
+  });
+
+  it("reports an entry without a usable link as an error line", async () => {
+    const { fetch } = fakeFetch({
+      [releasesFeedUrl("vercel/next.js")]: releasesFeed("someone/else", [
+        { tag: "v16.4.2", updated: "2026-11-05T10:00:00Z", html: "" },
+      ]),
+    });
+    const report = await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.errors).toContainEqual({
+      source: "vercel/next.js",
+      error: "1 of 1 entr(y/ies) had no link into this repo's releases and were skipped",
+    });
+  });
+
+  it("does not print a caller's malformed package name or version as its own line", async () => {
+    const { fetch } = fakeFetch({});
+    const report = await stackReport(
+      SINCE,
+      [
+        { name: "next\n! FORGED", version: "16.3.8" },
+        { name: "next", version: "1.0\n! FORGED" },
+      ],
+      { fetch, retryDelaysMs: [0, 0] },
+    );
+    expect(report.errors).toContainEqual({ source: "next ! FORGED", error: "not an npm package name, not checked" });
+    expect(report.errors).toContainEqual({ source: "next@1.0 ! FORGED", error: "not an exact version (x.y.z), not checked" });
+    expect(formatStack(report).split("\n").some((l) => l.startsWith("! FORGED"))).toBe(false);
+  });
+});

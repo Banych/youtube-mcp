@@ -24,11 +24,18 @@ export async function get(url: string, deps: Deps, init?: RequestInit): Promise<
   return res.text();
 }
 
+/**
+ * A failure as one short line. JSON.parse errors quote the response body, so they become a
+ * fixed "invalid JSON"; anything else is stripped of invisible characters and line breaks.
+ */
 export function errorMessage(reason: unknown): string {
-  if (reason instanceof Error) {
-    return reason.name === "TimeoutError" ? "timed out" : reason.message;
-  }
-  return String(reason);
+  if (reason instanceof SyntaxError) return "invalid JSON";
+  const raw = reason instanceof Error ? (reason.name === "TimeoutError" ? "timed out" : reason.message) : String(reason);
+  const line = raw
+    .replace(/[\p{Cf}\p{Co}\p{Cn}]/gu, "")
+    .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, " ")
+    .trim();
+  return line.length > 120 ? `${line.slice(0, 120)}…` : line;
 }
 
 /**
