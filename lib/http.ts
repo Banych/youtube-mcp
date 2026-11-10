@@ -30,3 +30,26 @@ export function errorMessage(reason: unknown): string {
   }
   return String(reason);
 }
+
+/**
+ * Some endpoints (YouTube's feeds, github.com from shared Vercel IPs) intermittently answer
+ * 404, 429 or 5xx for things that exist; a retry a moment later usually succeeds. Timeouts are
+ * not retried: three 8 s attempts would not fit the function's 30 s limit.
+ */
+const RETRY_DELAYS_MS = [500, 1500];
+
+const isTransient = (e: unknown) => e instanceof HttpError && (e.status === 404 || e.status === 429 || e.status >= 500);
+
+/** `get`, retried on transient answers; the final error names the number of tries. */
+export async function getWithRetry(url: string, deps: Deps): Promise<string> {
+  const delays = deps.retryDelaysMs ?? RETRY_DELAYS_MS;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await get(url, deps);
+    } catch (e) {
+      if (!isTransient(e)) throw e;
+      if (attempt >= delays.length) throw new Error(`${(e as Error).message} (${attempt + 1} tries)`);
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+}

@@ -1,19 +1,10 @@
 import { extractChannelId, type ChannelRef } from "./channels";
 import { parseFeed, type Feed, type Video } from "./feed";
-import { errorMessage, get, HttpError, type Deps } from "./http";
+import { errorMessage, get, getWithRetry, type Deps } from "./http";
 
 export type ChannelError = { channel: string; error: string };
 
 const FEED_URL = "https://www.youtube.com/feeds/videos.xml?channel_id=";
-
-/**
- * YouTube's feed endpoint intermittently answers 404, 429 or 5xx for channels that exist,
- * sometimes for every channel at once; a retry a moment later usually succeeds. Timeouts are
- * not retried: three 8 s attempts would not fit the function's 30 s limit.
- */
-const RETRY_DELAYS_MS = [500, 1500];
-
-const isTransient = (e: unknown) => e instanceof HttpError && (e.status === 404 || e.status === 429 || e.status >= 500);
 
 /** Handle → channel ID, kept for the life of the server instance. */
 const handleCache = new Map<string, string>();
@@ -43,17 +34,9 @@ export async function resolveChannelId(ref: ChannelRef, deps: Deps): Promise<str
   return id;
 }
 
+/** YouTube's feeds intermittently answer 404 for channels that exist, sometimes all at once. */
 export async function fetchFeed(channelId: string, deps: Deps): Promise<Feed> {
-  const delays = deps.retryDelaysMs ?? RETRY_DELAYS_MS;
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return parseFeed(await get(FEED_URL + channelId, deps));
-    } catch (e) {
-      if (!isTransient(e)) throw e;
-      if (attempt >= delays.length) throw new Error(`${(e as Error).message} (${attempt + 1} tries)`);
-      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
-    }
-  }
+  return parseFeed(await getWithRetry(FEED_URL + channelId, deps));
 }
 
 async function fetchAll(

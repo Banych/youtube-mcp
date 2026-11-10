@@ -14,7 +14,7 @@ function setup(config: Partial<Config> = {}) {
   });
   const cfg: Config = { channels: `${CHANNEL_A},${CHANNEL_B}`, token: TOKEN, ...config };
   // 23:30 UTC on 31 Oct is still 31 Oct in Lisbon (UTC+0 in winter).
-  return createServer(() => cfg, { fetch, now: () => new Date("2026-10-31T23:30:00Z") });
+  return createServer(() => cfg, { fetch, now: () => new Date("2026-10-31T23:30:00Z"), retryDelaysMs: [0, 0] });
 }
 
 let nextId = 1;
@@ -127,8 +127,8 @@ describe("MCP endpoint", () => {
     const result = await callTool(setup(), "stack_releases");
     const lines = result.content[0].text.split("\n");
     // setup() pins the clock to 2026-10-31T23:30Z; no releases feed is in its fixtures.
-    expect(lines[0]).toBe("Stable releases since 2026-10-24T23:30:00.000Z (0/10 repos read):");
-    expect(result.content[0].text).toContain("! vercel/next.js: HTTP 404");
+    expect(lines[0]).toBe("Stable releases at or after 2026-10-24T23:30:00.000Z (0/10 repos read):");
+    expect(result.content[0].text).toContain("! vercel/next.js: HTTP 404 (3 tries)");
     expect(result.isError).toBe(true);
   });
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  cut,
   exactVersion,
+  FEED_SIZE,
+  MAX_ADVISORY_DETAILS,
   fixedVersion,
   formatStack,
   OSV_BATCH_URL,
@@ -90,7 +93,7 @@ describe("stableVersion", () => {
 
 describe("parseReleases", () => {
   it("keeps stable releases inside the window, flagged and summarised", () => {
-    expect(parseReleases(NEXT_FEED, "next", "vercel/next.js", SINCE)).toEqual([
+    expect(parseReleases(NEXT_FEED, "next", "vercel/next.js", SINCE).releases).toEqual([
       {
         pkg: "next",
         repo: "vercel/next.js",
@@ -105,15 +108,54 @@ describe("parseReleases", () => {
   });
 
   it("flags a major version, breaking changes and deprecations", () => {
-    const [v8] = parseReleases(VITE_FEED, "vite", "vitejs/vite", SINCE);
+    const [v8] = parseReleases(VITE_FEED, "vite", "vitejs/vite", SINCE).releases;
     expect(v8.version).toBe("8.0.0");
     expect(v8.flags).toEqual(["major", "breaking", "deprecation"]);
+  });
+
+  it("compares times as instants, so offsets and an exactly equal since work", () => {
+    const feed = releasesFeed("vercel/next.js", [
+      // 23:00 at -08:00 on Nov 5 is 07:00Z on Nov 6: inside a window starting Nov 6 00:00Z.
+      { tag: "v16.4.3", updated: "2026-11-05T23:00:00-08:00", html: "<p>x</p>" },
+      { tag: "v16.4.2", updated: "2026-11-06T00:00:00Z", html: "<p>y</p>" },
+      { tag: "v16.4.1", updated: "2026-11-05T23:59:59Z", html: "<p>z</p>" },
+    ]);
+    const { releases } = parseReleases(feed, "next", "vercel/next.js", "2026-11-06T00:00:00.000Z");
+    expect(releases.map((r) => [r.version, r.published])).toEqual([
+      ["16.4.3", "2026-11-06T07:00:00Z"],
+      ["16.4.2", "2026-11-06T00:00:00Z"],
+    ]);
+  });
+
+  it("skips an entry with an unreadable date or a malformed tag URL instead of failing the feed", () => {
+    const feed = releasesFeed("vercel/next.js", [
+      { tag: "v16.4.2", updated: "not a date", html: "<p>x</p>" },
+      { tag: "v16.4.1", updated: "2026-11-05T10:00:00Z", html: "<p>y</p>" },
+    ]).replace("releases/tag/v16.4.1", "releases/tag/v16.4.1%E0%A4%A");
+    const parsed = parseReleases(feed, "next", "vercel/next.js", SINCE);
+    expect(parsed.badDates).toBe(1);
+    expect(parsed.releases).toEqual([]);
+  });
+
+  it("does not flag a passing mention of security", () => {
+    const feed = releasesFeed("vercel/next.js", [
+      { tag: "v16.4.2", updated: "2026-11-05T10:00:00Z", html: "<p>Improve security docs wording</p>" },
+    ]);
+    expect(parseReleases(feed, "next", "vercel/next.js", SINCE).releases[0].flags).toEqual([]);
   });
 
   it("rejects a page that is not a feed", () => {
     expect(() => parseReleases("<html><body>rate limited</body></html>", "next", "vercel/next.js", SINCE)).toThrow(
       "not a releases feed",
     );
+  });
+});
+
+describe("cut", () => {
+  it("caps text without spaces too", () => {
+    const out = cut("a".repeat(5000));
+    expect(out).toHaveLength(201);
+    expect(out.endsWith("…")).toBe(true);
   });
 });
 
@@ -137,6 +179,25 @@ describe("versions", () => {
     expect(fixedVersion(vuln, "next", "15.3.3")).toBe("15.5.28");
     expect(fixedVersion(vuln, "react", "19.0.0")).toBeNull();
   });
+
+  it("uses the range that contains the version, and none when that range has no fix", () => {
+    const vuln = {
+      id: "GHSA-x",
+      affected: [
+        {
+          package: { ecosystem: "npm", name: "next" },
+          ranges: [
+            { events: [{ introduced: "0" }, { fixed: "14.2.30" }] },
+            { events: [{ introduced: "15.0.0" }, { last_affected: "15.9.9" }] },
+            { events: [{ introduced: "16.0.0-canary.1" }, { fixed: "16.1.0-canary.4" }] },
+          ],
+        },
+      ],
+    };
+    expect(fixedVersion(vuln, "next", "15.3.3")).toBeNull();
+    expect(fixedVersion(vuln, "next", "14.1.0")).toBe("14.2.30");
+    expect(fixedVersion(vuln, "next", "16.0.5")).toBe("16.1.0-canary.4");
+  });
 });
 
 describe("stackReport", () => {
@@ -156,7 +217,7 @@ describe("stackReport", () => {
         { name: "react", version: "19.2.0" },
         { name: "vue", version: "latest" },
       ],
-      { fetch },
+      { fetch, retryDelaysMs: [0, 0] },
     );
     expect(report.releases.map((r) => `${r.pkg} ${r.version}`)).toEqual(["next 16.4.2", "vite 8.0.0"]);
     expect(report.advisories).toEqual([
@@ -174,8 +235,9 @@ describe("stackReport", () => {
     expect(report.clean).toEqual([{ name: "react", version: "19.2.0" }]);
     // Repos without a fixture answer 404; vue's "latest" is not checkable.
     expect(report.errors).toContainEqual({ source: "vue@latest", error: "not an exact version (x.y.z), not checked" });
-    expect(report.errors).toContainEqual({ source: "facebook/react", error: "HTTP 404" });
-    expect(report.errors.filter((e) => e.source.includes("/"))).toHaveLength(Object.keys(STACK).length - 2);
+    expect(report.errors).toContainEqual({ source: "facebook/react", error: "HTTP 404 (3 tries)" });
+    expect(report.failedRepos).toBe(Object.keys(STACK).length - 2);
+    expect(report.checked).toBe(2);
 
     const batch = calls.find((c) => c.url === OSV_BATCH_URL);
     expect(batch?.init?.method).toBe("POST");
@@ -189,15 +251,73 @@ describe("stackReport", () => {
 
   it("skips OSV entirely when no packages are passed", async () => {
     const { fetch, calls } = fakeFetch(routes);
-    await stackReport(SINCE, [], { fetch });
+    await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
     expect(calls.some((c) => c.url.startsWith("https://api.osv.dev"))).toBe(false);
   });
 
   it("reports OSV failing without losing the releases", async () => {
     const { fetch } = fakeFetch({ ...routes, [OSV_BATCH_URL]: 503 });
-    const report = await stackReport(SINCE, [{ name: "next", version: "16.3.8" }], { fetch });
+    const report = await stackReport(SINCE, [{ name: "next", version: "16.3.8" }], { fetch, retryDelaysMs: [0, 0] });
     expect(report.releases).toHaveLength(2);
+    expect(report.osvFailed).toBe(true);
     expect(report.errors).toContainEqual({ source: "OSV advisories", error: "HTTP 503" });
+    expect(formatStack(report)).toContain("Advisories (OSV) for 1 package version(s):\n  unavailable (see the errors below)");
+  });
+
+  it("keeps an advisory whose details fail, and lists every advisory past the detail limit", async () => {
+    const extra = MAX_ADVISORY_DETAILS + 2;
+    const vulns = Array.from({ length: extra }, (_, i) => ({ id: `GHSA-${i}` }));
+    const { fetch } = fakeFetch({
+      [OSV_BATCH_URL]: JSON.stringify({ results: [{ vulns }] }),
+      [osvVulnUrl("GHSA-0")]: GHSA.replace('"GHSA-aaaa-bbbb-cccc"', '"GHSA-0"'),
+      // GHSA-1 … answer 404 (details unavailable); the last two are never looked up.
+    });
+    const report = await stackReport(SINCE, [{ name: "next", version: "16.3.8" }], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.advisories).toHaveLength(extra);
+    expect(report.advisories[0]).toMatchObject({ id: "GHSA-0", severity: "CRITICAL", fixed: "16.4.1" });
+    expect(report.advisories[1]).toMatchObject({ id: "GHSA-1", severity: "UNKNOWN", summary: "details unavailable (HTTP 404)" });
+    expect(report.advisories.at(-1)).toMatchObject({ summary: "details not fetched" });
+    expect(report.errors).toContainEqual({
+      source: "OSV advisories",
+      error: `2 advisory detail(s) not fetched (limit ${MAX_ADVISORY_DETAILS}); listed by id only`,
+    });
+    expect(report.clean).toEqual([]);
+  });
+
+  it("checks a package version passed twice once, and reports an aliased advisory once", async () => {
+    const { fetch, calls } = fakeFetch({
+      [OSV_BATCH_URL]: JSON.stringify({ results: [{ vulns: [{ id: "GHSA-aaaa-bbbb-cccc" }, { id: "CVE-2026-12345" }] }] }),
+      [osvVulnUrl("GHSA-aaaa-bbbb-cccc")]: GHSA,
+      [osvVulnUrl("CVE-2026-12345")]: JSON.stringify({ id: "CVE-2026-12345", aliases: ["GHSA-aaaa-bbbb-cccc"] }),
+    });
+    const report = await stackReport(
+      SINCE,
+      [
+        { name: "next", version: "16.3.8" },
+        { name: "next", version: "^16.3.8" },
+      ],
+      { fetch, retryDelaysMs: [0, 0] },
+    );
+    const batch = calls.find((c) => c.url === OSV_BATCH_URL);
+    expect(JSON.parse(String(batch?.init?.body)).queries).toHaveLength(1);
+    expect(report.advisories.map((a) => a.id)).toEqual(["GHSA-aaaa-bbbb-cccc"]);
+  });
+
+  it("warns when a feed's 10 entries are all newer than the window start", async () => {
+    const busy = releasesFeed(
+      "vercel/next.js",
+      Array.from({ length: FEED_SIZE }, (_, i) => ({
+        tag: `v16.5.0-canary.${i}`,
+        updated: `2026-11-0${(i % 3) + 5}T10:00:00Z`,
+        html: "<p>canary</p>",
+      })),
+    );
+    const { fetch } = fakeFetch({ [releasesFeedUrl("vercel/next.js")]: busy });
+    const report = await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.errors).toContainEqual({
+      source: "vercel/next.js",
+      error: `feed holds only the latest ${FEED_SIZE} releases, all newer than ${SINCE}; older stable releases may be missing`,
+    });
   });
 });
 
@@ -212,14 +332,16 @@ describe("formatStack", () => {
       { name: "next", version: "16.3.8" },
       { name: "react", version: "19.2.0" },
     ];
-    const text = formatStack(await stackReport(SINCE, packages, { fetch }), packages.length);
+    const text = formatStack(await stackReport(SINCE, packages, { fetch, retryDelaysMs: [0, 0] }));
     const lines = text.split("\n");
-    expect(lines[0]).toBe(`Stable releases since ${SINCE} (1/${Object.keys(STACK).length} repos read):`);
+    expect(lines[0]).toBe(`Stable releases at or after ${SINCE} (1/${Object.keys(STACK).length} repos read):`);
     expect(lines[1]).toBe("next 16.4.2 · 2026-11-05 · security — https://github.com/vercel/next.js/releases/tag/v16.4.2");
     expect(text).toContain(
       "next 16.3.8 · GHSA-aaaa-bbbb-cccc, CVE-2026-12345 · CRITICAL · fixed in 16.4.1 — https://osv.dev/vulnerability/GHSA-aaaa-bbbb-cccc",
     );
     expect(text).toContain("react 19.2.0 · no known advisories");
-    expect(text).toContain("! facebook/react: HTTP 404");
+    expect(lines[2]).toBe("    notes: Core Changes Fix a security issue in middleware (CVE-2026-12345) & more");
+    expect(text).toContain("    summary: Next.js middleware authorization bypass");
+    expect(text).toContain("! facebook/react: HTTP 404 (3 tries)");
   });
 });
