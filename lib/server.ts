@@ -5,7 +5,7 @@ import { parseChannelList } from "./channels";
 import type { Video } from "./feed";
 import { formatStack, STACK, stackReport } from "./stack";
 import { formatForecast, getForecast, localDate, PORTO } from "./weather";
-import type { Deps } from "./http";
+import { errorMessage, type Deps } from "./http";
 import { describeChannels, latestUploads, type ChannelError } from "./youtube";
 
 export type Config = {
@@ -18,8 +18,8 @@ export type Config = {
 const readOnly = { readOnlyHint: true, openWorldHint: true } as const;
 
 function formatVideo(v: Video): string {
-  const when = v.published.slice(0, 16).replace("T", " ");
-  const line = `${when} UTC · ${v.channelTitle} — ${v.title}${v.isShort ? " (Short)" : ""} — ${v.url}`;
+  const when = v.published ? `${v.published.slice(0, 16).replace("T", " ")} UTC` : "unknown time";
+  const line = `${when} · ${v.channelTitle} — ${v.title}${v.isShort ? " (Short)" : ""} — ${v.url}`;
   return v.description ? `${line}\n    ${v.description}` : line;
 }
 
@@ -89,7 +89,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           const lines = [
             `${channels.length}/${refs.length} channel(s) readable`,
             ...channels.map(
-              (c) => `${c.title} (${c.id}) from "${c.channel}" — latest upload ${c.latest ?? "none"}`,
+              (c) => `${c.title} (${c.id}) from "${c.channel}" — latest upload ${c.latest || "none"}`,
             ),
             ...formatErrors(errors, invalid),
           ];
@@ -120,7 +120,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           } catch (e) {
             return {
               isError: true,
-              content: [{ type: "text", text: `Weather unavailable: ${e instanceof Error ? e.message : String(e)}` }],
+              content: [{ type: "text", text: `Weather unavailable: ${errorMessage(e)}` }],
             };
           }
         },
