@@ -100,14 +100,27 @@ export function plainText(html: string): string {
     .trim();
 }
 
-/** At most SUMMARY_MAX characters (plus "…"), cut at a space when there is one. */
-export function cut(s: string): string {
+/**
+ * Outside text (release notes, OSV summaries) as one capped line: control characters and
+ * line breaks collapse to spaces, so it can never start a line of the tool's own output.
+ */
+export function cut(raw: unknown): string {
+  const s = String(raw ?? "")
+    .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, " ")
+    .trim();
   if (s.length <= SUMMARY_MAX) return s;
   const space = s.lastIndexOf(" ", SUMMARY_MAX);
   return s.slice(0, space > 0 ? space : SUMMARY_MAX) + "…";
 }
 
 const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
+/** A version OSV may list as "fixed": x.y.z with an optional prerelease suffix, nothing else. */
+const FIX_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]{1,40})?$/;
+/** Advisory ids and aliases: GHSA-…, CVE-…, OSV-…, MAL-… and the like. */
+const ADVISORY_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,63}$/;
+/** GitHub's severity words, or a CVSS vector. */
+const SEVERITY_WORD = /^(LOW|MODERATE|MEDIUM|HIGH|CRITICAL)$/;
+const CVSS_VECTOR = /^CVSS:\d\.\d(\/[A-Za-z]{1,3}:[A-Za-z]{1,3}){1,30}$/;
 
 /** "16.4.1" or "15.0.0-canary.5" → "16.4.1" / "15.0.0"; anything else → null. */
 const baseVersion = (v: string) => /^(\d+\.\d+\.\d+)/.exec(v)?.[1] ?? null;
@@ -174,7 +187,8 @@ export function parseReleases(xml: string, pkg: string, repo: string, since: str
       continue;
     }
     parsed.oldest = parsed.oldest === null ? t : Math.min(parsed.oldest, t);
-    const url = e.link?.find((l) => l["@_href"]?.includes("/releases/tag/"))?.["@_href"] ?? "";
+    const prefix = `https://github.com/${repo}/releases/tag/`;
+    const url = e.link?.find((l) => l["@_href"]?.startsWith(prefix))?.["@_href"] ?? "";
     const tag = tagOf(url);
     const version = stableVersion(tag, pkg);
     if (!version || t < sinceMs) continue;
@@ -200,29 +214,56 @@ export function exactVersion(raw: string): string | null {
 }
 
 type OsvEvent = { introduced?: string; fixed?: string; last_affected?: string };
-type OsvVuln = {
-  id: string;
-  summary?: string;
-  aliases?: string[];
-  severity?: { type?: string; score?: string }[];
-  database_specific?: { severity?: string };
-  affected?: { package?: { name?: string; ecosystem?: string }; ranges?: { events?: OsvEvent[] }[] }[];
-};
+type OsvRange = { events: OsvEvent[] };
+type OsvAffected = { name: string; ecosystem: string; ranges: OsvRange[] };
+
+/** The parts of an OSV record this tool uses, validated: anything malformed is dropped, never trusted. */
+export type OsvVuln = { id: string; summary: string; aliases: string[]; severity: string | null; affected: OsvAffected[] };
+
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+export function readVuln(json: unknown, id: string): OsvVuln {
+  const v = obj(json);
+  const dbSeverity = str(obj(v.database_specific).severity)?.toUpperCase();
+  const cvss = arr(v.severity).map((x) => str(obj(x).score)).find((x) => x && CVSS_VECTOR.test(x));
+  return {
+    id,
+    summary: cut(v.summary),
+    aliases: arr(v.aliases).filter((a): a is string => typeof a === "string" && ADVISORY_ID.test(a) && a !== id),
+    severity: dbSeverity && SEVERITY_WORD.test(dbSeverity) ? dbSeverity : cvss ? `CVSS vector ${cvss}` : null,
+    affected: arr(v.affected).map((a) => {
+      const pkg = obj(obj(a).package);
+      return {
+        name: str(pkg.name) ?? "",
+        ecosystem: str(pkg.ecosystem) ?? "",
+        ranges: arr(obj(a).ranges).map((r) => ({
+          events: arr(obj(r).events).map((ev) => {
+            const e = obj(ev);
+            return { introduced: str(e.introduced), fixed: str(e.fixed), last_affected: str(e.last_affected) };
+          }),
+        })),
+      };
+    }),
+  };
+}
 
 /**
- * The fix for the range that contains `version`: the smallest "fixed" whose range was
- * introduced at or before it. A range that ends in "last_affected" has no fix, so null.
+ * The fix for the range that contains `version`: among "fixed" values whose range was introduced
+ * at or before it, the lowest version, preferring a stable release over a prerelease of the same
+ * version. A range that ends in "last_affected" has no fix, so null. Only well-formed versions count.
  */
 export function fixedVersion(vuln: OsvVuln, pkg: string, version: string): string | null {
   const candidates: { raw: string; base: string }[] = [];
-  for (const affected of vuln.affected ?? []) {
-    if (affected.package?.name !== pkg || affected.package?.ecosystem !== "npm") continue;
-    for (const range of affected.ranges ?? []) {
+  for (const affected of vuln.affected) {
+    if (affected.name !== pkg || affected.ecosystem !== "npm") continue;
+    for (const range of affected.ranges) {
       let introduced: string | null = null;
-      for (const ev of range.events ?? []) {
+      for (const ev of range.events) {
         if (ev.introduced !== undefined) introduced = ev.introduced === "0" ? "0.0.0" : baseVersion(ev.introduced);
         if (ev.fixed !== undefined) {
-          const fixed = baseVersion(ev.fixed);
+          const fixed = FIX_VERSION.test(ev.fixed) ? baseVersion(ev.fixed) : null;
           if (
             introduced &&
             fixed &&
@@ -237,24 +278,31 @@ export function fixedVersion(vuln: OsvVuln, pkg: string, version: string): strin
       }
     }
   }
-  return candidates.sort((a, b) => compareVersions(a.base, b.base))[0]?.raw ?? null;
-}
-
-function severityOf(v: OsvVuln): string {
-  const fromGitHub = v.database_specific?.severity;
-  if (fromGitHub) return fromGitHub;
-  const cvss = v.severity?.find((s) => s.score)?.score;
-  return cvss ? cvss : "UNKNOWN";
+  const isPre = (raw: string) => raw.includes("-");
+  candidates.sort((a, b) => compareVersions(a.base, b.base) || Number(isPre(a.raw)) - Number(isPre(b.raw)));
+  return candidates[0]?.raw ?? null;
 }
 
 async function advisoriesFor(packages: PackageVersion[], deps: Deps, report: StackReport) {
   const body = JSON.stringify({
     queries: packages.map((p) => ({ package: { name: p.name, ecosystem: "npm" }, version: p.version })),
   });
-  const batch = JSON.parse(
-    await get(OSV_BATCH_URL, deps, { method: "POST", headers: { "content-type": "application/json" }, body }),
-  ) as { results?: { vulns?: { id: string }[] }[] };
-  const hits = packages.flatMap((p, i) => (batch.results?.[i]?.vulns ?? []).map((v) => ({ p, id: v.id })));
+  const batch = obj(
+    JSON.parse(
+      await get(OSV_BATCH_URL, deps, { method: "POST", headers: { "content-type": "application/json" }, body }),
+    ),
+  );
+  const results = arr(batch.results);
+  let badIds = 0;
+  const hits = packages.flatMap((p, i) =>
+    arr(obj(results[i]).vulns).flatMap((v) => {
+      const id = str(obj(v).id);
+      if (id && ADVISORY_ID.test(id)) return [{ p, id }];
+      badIds++;
+      return [];
+    }),
+  );
+  if (badIds) report.errors.push({ source: "OSV advisories", error: `${badIds} malformed advisory id(s) skipped` });
 
   const ids = [...new Set(hits.map((h) => h.id))];
   const looked = ids.slice(0, MAX_ADVISORY_DETAILS);
@@ -268,34 +316,43 @@ async function advisoriesFor(packages: PackageVersion[], deps: Deps, report: Sta
   await Promise.all(
     looked.map(async (id) => {
       try {
-        details.set(id, JSON.parse(await get(osvVulnUrl(id), deps)) as OsvVuln);
+        details.set(id, readVuln(JSON.parse(await getWithRetry(osvVulnUrl(id), deps)), id));
       } catch (e) {
         details.set(id, `details unavailable (${errorMessage(e)})`);
       }
     }),
   );
 
-  // Every hit is reported, with or without details; aliases of one advisory are reported once per package.
-  const seen = new Map<string, Set<string>>();
+  // Every hit is reported, with or without details. Aliases of one advisory are reported once per
+  // package; when the first record of it had no details and a later alias does, the details are kept.
+  const recorded = new Map<string, Map<string, Advisory>>();
   for (const { p, id } of hits) {
     const key = `${p.name}@${p.version}`;
-    const known = seen.get(key) ?? new Set<string>();
-    seen.set(key, known);
+    const byName = recorded.get(key) ?? new Map<string, Advisory>();
+    recorded.set(key, byName);
     const d = details.get(id);
     const vuln = typeof d === "object" ? d : undefined;
-    const names = [id, ...(vuln?.aliases ?? [])];
-    if (names.some((n) => known.has(n))) continue;
-    names.forEach((n) => known.add(n));
-    report.advisories.push({
+    const advisory: Advisory = {
       pkg: p.name,
       version: p.version,
       id,
       aliases: vuln?.aliases ?? [],
-      severity: vuln ? severityOf(vuln) : "UNKNOWN",
+      severity: vuln ? (vuln.severity ?? "severity not listed") : "severity not fetched",
       fixed: vuln ? fixedVersion(vuln, p.name, p.version) : null,
-      summary: vuln ? cut(vuln.summary ?? "") : typeof d === "string" ? d : "details not fetched",
-      url: `https://osv.dev/vulnerability/${id}`,
-    });
+      summary: vuln ? vuln.summary : typeof d === "string" ? d : "details not fetched",
+      url: `https://osv.dev/vulnerability/${encodeURIComponent(id)}`,
+    };
+    const names = [id, ...advisory.aliases];
+    const earlier = names.map((n) => byName.get(n)).find(Boolean);
+    if (earlier) {
+      if (vuln && earlier.severity === "severity not fetched") {
+        Object.assign(earlier, { ...advisory, id: earlier.id, aliases: [...new Set([...earlier.aliases, ...names])].filter((n) => n !== earlier.id) });
+      }
+      names.forEach((n) => byName.set(n, earlier));
+      continue;
+    }
+    names.forEach((n) => byName.set(n, advisory));
+    report.advisories.push(advisory);
   }
   const affected = new Set(hits.map((h) => h.p));
   report.clean = packages.filter((p) => !affected.has(p));
@@ -365,7 +422,7 @@ export function formatStack(r: StackReport): string {
     if (r.osvFailed) lines.push("  unavailable (see the errors below)");
     for (const a of r.advisories) {
       const ids = [a.id, ...a.aliases.filter((x) => x !== a.id)].slice(0, 3).join(", ");
-      const fix = a.fixed ? `fixed in ${a.fixed}` : "no fixed version listed";
+      const fix = a.fixed ? `fixed in ${a.fixed}${a.fixed.includes("-") ? " (prerelease)" : ""}` : "no fixed version listed";
       lines.push(`${a.pkg} ${a.version} · ${ids} · ${a.severity} · ${fix} — ${a.url}`);
       if (a.summary) lines.push(`    summary: ${a.summary}`);
     }

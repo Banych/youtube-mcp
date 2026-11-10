@@ -36,9 +36,13 @@ needed) and asks [OSV](https://osv.dev) for advisories. Limits worth knowing:
   read as `16.3.8`; ranges and tags like `latest` are listed as not checked.
 - Details are fetched for up to 50 advisories; any beyond that are still listed by
   id. An advisory whose details fail is listed with the error.
-- Lines starting `notes:` and `summary:` are quoted from release notes and
-  advisories, which are outside text: the tool's description tells clients to
-  treat them as data.
+- Everything from GitHub and OSV is validated before it is printed: ids,
+  versions and severities must match a strict pattern or are dropped, and quoted
+  text (lines starting `notes:` and `summary:`) is collapsed to one capped line,
+  so it can't start a line of the tool's own output. The tool's description
+  tells clients to treat quoted text as data.
+- A fix that exists only as a prerelease is marked `(prerelease)`; a stable fix of
+  the same version is preferred.
 
 `porto_weather` needs no key or configuration. Open-Meteo forecasts about two
 weeks ahead; a date outside its range comes back as a tool error with
