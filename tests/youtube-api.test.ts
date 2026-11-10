@@ -227,3 +227,32 @@ describe("API cost and time", () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe("review round two", () => {
+  it("does not send maxResults with ids to videos.list", () => {
+    expect(new URL(videosUrl(["a", "b"])).searchParams.has("maxResults")).toBe(false);
+  });
+
+  it("refuses redirects for keyed requests", async () => {
+    const { fetch, calls } = fakeFetch({ [uploadsUrl(CHANNEL_A)]: API_A });
+    await fetchUploads(CHANNEL_A, KEY, { fetch });
+    expect(calls[0].init?.redirect).toBe("error");
+  });
+
+  it("reports a request cut short by the budget as out of time, not as a slow server", async () => {
+    const { get } = await import("../lib/http");
+    const hang = ((_: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)))) as typeof globalThis.fetch;
+    await expect(get("https://x.test/", { fetch: hang, deadline: Date.now() + 50 })).rejects.toThrow("out of time");
+    await expect(get("https://x.test/", { fetch: hang, timeoutMs: 30 })).rejects.toThrow(/timed out|aborted|timeout/i);
+  });
+
+  it("does not retry when the retry would not fit before the deadline", async () => {
+    const { getWithRetry } = await import("../lib/http");
+    const { fetch, calls } = fakeFetch({ "https://x.test/": 404 });
+    await expect(getWithRetry("https://x.test/", { fetch, deadline: Date.now() + 600, retryDelaysMs: [0, 0] })).rejects.toThrow(
+      "HTTP 404 (1 tries)",
+    );
+    expect(calls).toHaveLength(1);
+  });
+});

@@ -4,9 +4,9 @@ import { arr, obj, str } from "./json";
 
 /**
  * The YouTube Data API v3, used first when YT_API_KEY is set: it answers by key, not by the
- * caller's IP, so it keeps working when the feeds refuse Vercel's shared servers. Costs per call
- * of latest_uploads or list_channels: 1 unit per channel (its uploads playlist) plus 1 per 50
- * videos for the Shorts check, against a free 10,000 units a day.
+ * caller's IP, so it keeps working when the feeds refuse Vercel's shared servers. Costs: 1 unit per
+ * channel (its uploads playlist) for latest_uploads and list_channels, plus, for latest_uploads
+ * only, 1 per 50 videos inside the since window for the Shorts check; free quota is 10,000 a day.
  *
  * The key travels in the X-Goog-Api-Key header, never in a URL, so it can't reach output, logs,
  * fetch errors or Next's fetch trace spans (which record full URLs).
@@ -30,11 +30,13 @@ export function uploadsUrl(channelId: string): string {
 
 /** maxWidth makes the API return the player's embed size, which shows whether a video is vertical. */
 export function videosUrl(ids: string[]): string {
-  const params = new URLSearchParams({ part: "contentDetails,player", id: ids.join(","), maxResults: "50", maxWidth: "480" });
+  // No maxResults: videos.list does not accept it together with id (batches of 50 ids cap the answer).
+  const params = new URLSearchParams({ part: "contentDetails,player", id: ids.join(","), maxWidth: "480" });
   return `${API_BASE}/videos?${params}`;
 }
 
-const withKey = (key: string): RequestInit => ({ headers: { "x-goog-api-key": key } });
+/** The key as a header; a redirect would carry a custom header along, so redirects are refused. */
+const withKey = (key: string): RequestInit => ({ headers: { "x-goog-api-key": key }, redirect: "error" });
 
 export async function fetchUploads(channelId: string, key: string, deps: Deps): Promise<Feed> {
   if (!UC_ID.test(channelId)) throw new Error("not a UC… channel id");

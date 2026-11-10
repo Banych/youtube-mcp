@@ -40,12 +40,16 @@ export class HttpError extends Error {
 export async function get(url: string, deps: Deps, init?: RequestInit): Promise<string> {
   const left = timeLeft(deps);
   if (left <= 0) throw new Error("out of time");
-  const res = await deps.fetch(url, {
-    ...init,
-    signal: AbortSignal.timeout(Math.min(deps.timeoutMs ?? 8000, left)),
-  });
-  if (!res.ok) throw new HttpError(res.status);
-  return res.text();
+  const timeout = deps.timeoutMs ?? 8000;
+  try {
+    const res = await deps.fetch(url, { ...init, signal: AbortSignal.timeout(Math.min(timeout, left)) });
+    if (!res.ok) throw new HttpError(res.status);
+    return await res.text();
+  } catch (e) {
+    // Cut short by the call's budget rather than by a slow server: say so.
+    if (left < timeout && e instanceof Error && e.name === "TimeoutError") throw new Error("out of time");
+    throw e;
+  }
 }
 
 /**
@@ -92,7 +96,8 @@ export async function getWithRetry(url: string, deps: Deps): Promise<string> {
       return await get(url, deps);
     } catch (e) {
       if (!isTransient(e)) throw e;
-      if (attempt >= delays.length || timeLeft(deps) <= delays[attempt]) {
+      // A retry needs its wait plus about a second for the request itself.
+      if (attempt >= delays.length || timeLeft(deps) <= delays[attempt] + 1000) {
         throw new Error(`${(e as Error).message} (${attempt + 1} tries)`);
       }
       await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
