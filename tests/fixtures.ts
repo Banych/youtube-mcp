@@ -57,10 +57,10 @@ export const FEED_B = feedXml(CHANNEL_B, "Bravo", [
 
 /** A fake fetch that serves fixed bodies by URL and records calls. */
 export function fakeFetch(routes: Record<string, string | number>) {
-  const calls: { url: string; headers: Headers }[] = [];
+  const calls: { url: string; headers: Headers; init?: RequestInit }[] = [];
   const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    calls.push({ url, headers: new Headers(init?.headers) });
+    calls.push({ url, headers: new Headers(init?.headers), init });
     const body = routes[url];
     if (body === undefined) return new Response("not found", { status: 404 });
     if (typeof body === "number") return new Response("error", { status: body });

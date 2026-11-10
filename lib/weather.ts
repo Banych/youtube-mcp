@@ -1,4 +1,4 @@
-import type { Deps } from "./youtube";
+import type { Deps } from "./http";
 
 /** The one place the Daily brief needs weather for. */
 export const PORTO = { name: "Porto", latitude: 41.1496, longitude: -8.611, timezone: "Europe/Lisbon" } as const;
