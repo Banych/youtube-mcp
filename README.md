@@ -33,14 +33,15 @@ needed) and asks [OSV](https://osv.dev) for advisories. Limits worth knowing:
 - github.com can answer 429 to shared Vercel IPs; 404, 429 and 5xx are retried
   twice, as for the YouTube feeds.
 - Up to 40 package versions per call, deduplicated. Versions such as `^16.3.8` are
-  read as `16.3.8`; ranges and tags like `latest` are listed as not checked.
+  read as `16.3.8`; ranges and tags like `latest`, and anything that isn't an npm
+  package name, are listed as not checked without failing the call.
 - Details are fetched for up to 50 advisories; any beyond that are still listed by
   id. An advisory whose details fail is listed with the error.
 - Outside values are checked before they are printed: ids, versions, severities
   and npm package names must match a strict pattern or are dropped; release URLs
   are rebuilt from the validated tag; quoted text (lines starting `notes:` and
-  `summary:`) and error messages are collapsed to one capped line with invisible
-  characters removed, and a response that isn't valid JSON is reported as
+  `summary:`) and error messages are reduced to one capped line by an allow-list
+  (letters, digits, punctuation, symbols, marks, spaces), and a response that isn't valid JSON is reported as
   `invalid JSON` rather than quoted. The tool's description tells clients to
   treat quoted text as data.
 - A fix that exists only as a prerelease is marked `(prerelease)`; a stable fix of

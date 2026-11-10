@@ -25,17 +25,28 @@ export async function get(url: string, deps: Deps, init?: RequestInit): Promise<
 }
 
 /**
- * A failure as one short line. JSON.parse errors quote the response body, so they become a
- * fixed "invalid JSON"; anything else is stripped of invisible characters and line breaks.
+ * Outside text as one capped line, by allow-list: letters, digits, punctuation, symbols, marks
+ * and plain spaces stay; line breaks become spaces; everything else (control and format
+ * characters, private-use and unassigned code points) goes, along with the blank-looking
+ * characters those classes miss: variation selectors, the combining grapheme joiner, Hangul
+ * fillers and the Braille blank.
  */
+export function oneLine(raw: unknown, max: number): string {
+  const s = String(raw ?? "")
+    .replace(/[\p{Zl}\p{Zp}\r\n\t\v\f]+/gu, " ")
+    .replace(/[^\p{L}\p{N}\p{P}\p{S}\p{M}\p{Zs}]/gu, "")
+    .replace(/[\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u034F\u115F\u1160\u3164\uFFA0\u2800]/gu, "")
+    .replace(/\p{Zs}+/gu, " ")
+    .trim();
+  if (s.length <= max) return s;
+  const space = s.lastIndexOf(" ", max);
+  return s.slice(0, space > 0 ? space : max) + "…";
+}
+
+/** A failure as one short line. JSON.parse errors quote the response body, so they become "invalid JSON". */
 export function errorMessage(reason: unknown): string {
   if (reason instanceof SyntaxError) return "invalid JSON";
-  const raw = reason instanceof Error ? (reason.name === "TimeoutError" ? "timed out" : reason.message) : String(reason);
-  const line = raw
-    .replace(/[\p{Cf}\p{Co}\p{Cn}]/gu, "")
-    .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, " ")
-    .trim();
-  return line.length > 120 ? `${line.slice(0, 120)}…` : line;
+  return oneLine(reason instanceof Error ? (reason.name === "TimeoutError" ? "timed out" : reason.message) : reason, 120);
 }
 
 /**

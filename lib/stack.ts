@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { errorMessage, get, getWithRetry, type Deps } from "./http";
+import { errorMessage, get, getWithRetry, oneLine, type Deps } from "./http";
 
 /** The packages the Daily brief's Stack news covers, and the repo whose releases speak for each. */
 export const STACK: Record<string, string> = {
@@ -100,19 +100,8 @@ export function plainText(html: string): string {
     .trim();
 }
 
-/**
- * Outside text (release notes, OSV summaries) as one capped line: control characters and
- * line breaks collapse to spaces, so it can never start a line of the tool's own output.
- */
-export function cut(raw: unknown): string {
-  const s = String(raw ?? "")
-    .replace(/[\p{Cf}\p{Co}\p{Cn}]/gu, "")
-    .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, " ")
-    .trim();
-  if (s.length <= SUMMARY_MAX) return s;
-  const space = s.lastIndexOf(" ", SUMMARY_MAX);
-  return s.slice(0, space > 0 ? space : SUMMARY_MAX) + "…";
-}
+/** Release notes and OSV summaries as one line of at most SUMMARY_MAX characters (see oneLine). */
+export const cut = (raw: unknown): string => oneLine(raw, SUMMARY_MAX);
 
 const VERSION = /^(\d+)\.(\d+)\.(\d+)$/;
 /** A version OSV may list as "fixed": x.y.z with an optional prerelease suffix, nothing else. */
@@ -121,8 +110,8 @@ const FIX_VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]{1,40})?$/;
 const ADVISORY_ID = /^[A-Za-z][A-Za-z0-9._:-]{2,63}$/;
 /** GitHub's severity words, or a CVSS vector. */
 const SEVERITY_WORD = /^(LOW|MODERATE|MEDIUM|HIGH|CRITICAL)$/;
-/** npm package names: optional @scope/, lowercase, as npm itself allows. */
-export const NPM_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+/** npm package names, optional @scope/; uppercase allowed because legacy packages (JSONStream) still use it. */
+export const NPM_NAME = /^(@[A-Za-z0-9][A-Za-z0-9-._~]*\/)?[A-Za-z0-9][A-Za-z0-9-._~]*$/;
 const CVSS_VECTOR = /^CVSS:\d\.\d(\/[A-Za-z]{1,3}:[A-Za-z]{1,3}){1,30}$/;
 
 /** "16.4.1" or "15.0.0-canary.5" → "16.4.1" / "15.0.0"; anything else → null. */

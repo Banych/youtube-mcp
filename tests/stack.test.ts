@@ -519,3 +519,29 @@ describe("review round three: the remaining paths into the output", () => {
     expect(formatStack(report).split("\n").some((l) => l.startsWith("! FORGED"))).toBe(false);
   });
 });
+
+describe("review round four", () => {
+  it("drops blank-looking characters the format-character strip missed, and keeps real text", () => {
+    const blanks = "a\uFE0Fb\u{E0100}c\u034Fd\u3164e\u115Ff\uFFA0g\u2800h";
+    expect(cut(blanks)).toBe("abcdefgh");
+    expect(cut("Café — Привет 🚀 v16.4.2 (security)")).toBe("Café — Привет 🚀 v16.4.2 (security)");
+  });
+
+  it("accepts legacy uppercase package names and rejects ones that start with punctuation", async () => {
+    const { fetch, calls } = fakeFetch({ [OSV_BATCH_URL]: JSON.stringify({ results: [{}] }) });
+    const report = await stackReport(
+      SINCE,
+      [
+        { name: "JSONStream", version: "1.3.5" },
+        { name: "-", version: "1.0.0" },
+      ],
+      { fetch, retryDelaysMs: [0, 0] },
+    );
+    const batch = calls.find((c) => c.url === OSV_BATCH_URL);
+    expect(JSON.parse(String(batch?.init?.body)).queries.map((q: { package: { name: string } }) => q.package.name)).toEqual([
+      "JSONStream",
+    ]);
+    expect(report.clean).toEqual([{ name: "JSONStream", version: "1.3.5" }]);
+    expect(report.errors).toContainEqual({ source: "-", error: "not an npm package name, not checked" });
+  });
+});
