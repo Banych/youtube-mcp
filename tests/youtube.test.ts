@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseChannelList } from "../lib/channels";
 import { clearHandleCache, describeChannels, latestUploads, resolveChannelId } from "../lib/youtube";
-import { CHANNEL_A, CHANNEL_B, FEED_A, FEED_B, fakeFetch, feedUrl } from "./fixtures";
+import { CHANNEL_A, CHANNEL_B, FEED_A, FEED_B, fakeFetch, feedUrl, feedXml } from "./fixtures";
 
 const refs = (raw: string) => parseChannelList(raw).channels;
 
@@ -113,8 +113,8 @@ describe("describeChannels", () => {
     const { channels, errors } = await describeChannels(refs(`@Bravo,${CHANNEL_A}`), { fetch });
     expect(errors).toEqual([]);
     expect(channels).toEqual([
-      { channel: "@Bravo", id: CHANNEL_B, title: "Bravo", latest: "2026-10-29T08:00:00+00:00" },
-      { channel: CHANNEL_A, id: CHANNEL_A, title: "Alpha & Co", latest: "2026-10-29T10:00:00+00:00" },
+      { channel: "@Bravo", id: CHANNEL_B, title: "Bravo", latest: "2026-10-29T08:00:00Z" },
+      { channel: CHANNEL_A, id: CHANNEL_A, title: "Alpha & Co", latest: "2026-10-29T10:00:00Z" },
     ]);
   });
 });
@@ -175,5 +175,44 @@ describe("failure logging", () => {
     const { fetch: ok } = fakeFetch({ [feedUrl(CHANNEL_A)]: FEED_A });
     await latestUploads(refs(CHANNEL_A), { limit: 10, includeShorts: false }, { fetch: ok, log });
     expect(lines).toEqual([]);
+  });
+});
+
+describe("videos without a readable date", () => {
+  const feed = feedXml(CHANNEL_A, "Alpha", [
+    { id: "d1", title: "Dated", published: "2026-10-29T09:00:00+00:00" },
+    { id: "u1", title: "Undated", published: "whenever" },
+  ]);
+
+  it("are left out of latest_uploads, with or without since", async () => {
+    const { fetch } = fakeFetch({ [feedUrl(CHANNEL_A)]: feed });
+    const all = await latestUploads(refs(CHANNEL_A), { limit: 10, includeShorts: false }, { fetch });
+    expect(all.videos.map((v) => v.id)).toEqual(["d1"]);
+  });
+
+  it("do not make a channel's latest upload blank", async () => {
+    const undatedOnly = feedXml(CHANNEL_A, "Alpha", [{ id: "u1", title: "Undated", published: "whenever" }]);
+    const { fetch } = fakeFetch({ [feedUrl(CHANNEL_A)]: undatedOnly });
+    const { channels } = await describeChannels(refs(CHANNEL_A), { fetch });
+    expect(channels[0].latest).toBeUndefined();
+  });
+
+  it("logs malformed ids once per call", async () => {
+    const lines: string[] = [];
+    const bad = feedXml(CHANNEL_A, "Alpha", [{ id: "bad id", title: "x", published: "2026-10-29T09:00:00+00:00" }]);
+    const { fetch } = fakeFetch({ [feedUrl(CHANNEL_A)]: bad });
+    await latestUploads(refs(CHANNEL_A), { limit: 10, includeShorts: false }, { fetch, log: (l) => lines.push(l) });
+    expect(lines).toEqual(["feeds: 1 video(s) with a malformed id skipped"]);
+  });
+
+  it("groups identical failures with a count", async () => {
+    const lines: string[] = [];
+    const { fetch } = fakeFetch({});
+    await latestUploads(refs(`${CHANNEL_A},${CHANNEL_B}`), { limit: 10, includeShorts: false }, {
+      fetch,
+      retryDelaysMs: [0, 0],
+      log: (l) => lines.push(l),
+    });
+    expect(lines).toEqual(["feeds: 2/2 failed (HTTP 404 (3 tries) ×2)"]);
   });
 });

@@ -52,7 +52,8 @@ export function oneLine(raw: unknown, max: number): string {
     .trim();
   if (s.length <= max) return s;
   const space = s.lastIndexOf(" ", max);
-  return s.slice(0, space > 0 ? space : max) + "…";
+  // Never end on half of a surrogate pair (an emoji or other astral character cut in two).
+  return s.slice(0, space > 0 ? space : max).replace(/[\uD800-\uDBFF]$/, "") + "…";
 }
 
 /** A failure as one short line. JSON.parse errors quote the response body, so they become "invalid JSON". */

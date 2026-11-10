@@ -45,7 +45,9 @@ const CONDITIONS: Record<number, string> = {
 };
 
 export function condition(code: number | null | undefined): string {
-  return code == null ? "unknown" : (CONDITIONS[code] ?? `code ${code}`);
+  // Open-Meteo's JSON is outside data: a code that is not a finite number prints as "unknown".
+  if (typeof code !== "number" || !Number.isFinite(code)) return "unknown";
+  return CONDITIONS[code] ?? `code ${code}`;
 }
 
 /** The subset of Open-Meteo's /v1/forecast response this module asks for. */

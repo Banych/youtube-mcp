@@ -122,3 +122,24 @@ describe("weather errors", () => {
     expect(result.content[0].text).toBe("Weather unavailable: Open-Meteo HTTP 400: Bad ! FORGED line");
   });
 });
+
+
+describe("weather codes from outside", () => {
+  it("prints a non-numeric code as unknown, never as text", () => {
+    const json = openMeteo();
+    (json.hourly!.weather_code as unknown[])[21] = "x\n! FORGED\u200b";
+    (json.daily!.weather_code as unknown[])[0] = "y\n! FORGED2";
+    const text = formatForecast(summarise(json, DATE));
+    expect(text).not.toContain("FORGED");
+    expect(text.split("\n")).toHaveLength(4);
+    expect(condition(42)).toBe("code 42");
+  });
+});
+
+describe("oneLine", () => {
+  it("never ends on half of an emoji", async () => {
+    const { oneLine } = await import("../lib/http");
+    const out = oneLine("a".repeat(9) + "🚀🚀", 10);
+    expect(out).toBe("a".repeat(9) + "…");
+  });
+});

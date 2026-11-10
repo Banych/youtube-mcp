@@ -53,6 +53,8 @@ async function fetchAll(
     else errors.push({ channel: refs[i].raw, error: errorMessage(result.reason) });
   });
   logFailures(deps, "feeds", refs.length, errors.map((e) => e.error));
+  const skipped = feeds.reduce((n, f) => n + f.feed.skipped, 0);
+  if (skipped) (deps.log ?? console.warn)(`feeds: ${skipped} video(s) with a malformed id skipped`);
   return { feeds, errors };
 }
 
@@ -67,7 +69,8 @@ export async function latestUploads(
   const videos = feeds
     .flatMap(({ feed }) => feed.videos)
     .filter((v) => options.includeShorts || !v.isShort)
-    .filter((v) => since === undefined || Date.parse(v.published) > since)
+    // A video without a readable date can be neither placed in time nor filtered by `since`.
+    .filter((v) => v.published !== "" && (since === undefined || Date.parse(v.published) > since))
     .sort((a, b) => Date.parse(b.published) - Date.parse(a.published))
     .slice(0, options.limit);
 
@@ -86,7 +89,11 @@ export async function describeChannels(
     channel: ref.raw,
     id: feed.channelId,
     title: feed.channelTitle,
-    latest: feed.videos.map((v) => v.published).sort().at(-1),
+    latest: feed.videos
+      .map((v) => v.published)
+      .filter(Boolean)
+      .sort()
+      .at(-1),
   }));
   return { channels, errors };
 }
