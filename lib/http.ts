@@ -69,11 +69,12 @@ export async function get(url: string, deps: Deps, init?: RequestInit): Promise<
   });
 }
 
-export type Capped = { text: string; type: string; bytes: number; cut: boolean };
+/** sized: `bytes` is the size the server declared; otherwise it is only what was read before the cut. */
+export type Capped = { text: string; type: string; bytes: number; cut: boolean; sized: boolean };
 
 /**
  * Like `get`, but reads at most maxBytes of the body, so a huge file costs no more than its first part.
- * `bytes` is the full size when the server declares it, else what was read; `type` is the Content-Type.
+ * `type` is the Content-Type.
  */
 export async function getCapped(url: string, deps: Deps, init: RequestInit, maxBytes: number): Promise<Capped> {
   return budgeted(deps, async (signal) => {
@@ -100,7 +101,8 @@ export async function getCapped(url: string, deps: Deps, init: RequestInit, maxB
       text += decoder.decode(value, { stream: true });
     }
     if (!cut) text += decoder.decode();
-    return { text, type, bytes: Number.isFinite(declared) && declared > bytes ? declared : bytes, cut };
+    const sized = Number.isFinite(declared) && declared >= bytes;
+    return { text, type, bytes: sized ? declared : bytes, cut, sized };
   });
 }
 

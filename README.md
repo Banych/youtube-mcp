@@ -22,7 +22,7 @@ All seven tools are read-only.
 | `porto_weather` | `date` (YYYY-MM-DD, optional; defaults to today in Lisbon) | `Porto · 2026-10-31 · 9–16°C, partly cloudy (Open-Meteo)`, then one line per day-strip slot: `18:00 → · 13°C, light showers, rain 40%` (temperature at the slot's middle hour, highest rain chance in the slot) |
 | `stack_releases` | `since` (ISO 8601, optional; defaults to 7 days ago), `packages` (optional list of `{name, version}`) | Stable releases of next, vue, nuxt, react, typescript, vite, vitest, tailwindcss, prisma and @supabase/supabase-js at or after that time, flagged `major` / `breaking` / `security` / `deprecation`; then, for each package version passed, its known advisories from OSV with severity and the version that fixes it |
 | `github_activity` | `since` (ISO 8601, optional; defaults to 24 hours ago), `repos` (optional; owner/name or just name, defaults to all of `GH_REPOS`), `issueLimit` (0–50, default 10) | One block per repo: open PRs with author, dates and CI of the head commit (check runs and commit statuses, so Vercel counts); Dependabot PRs counted by kind (security / major / minor-patch, grouped ones by their biggest bump) and listed only when security-related, labelled as a blocker, or a major bump with failing CI; open issues with label counts and milestones, always listing new ones and those labelled blocker/critical/security/urgent/p0/prod; open milestones with due dates; commits on the default branch since `since`; push/schedule workflows failing on the default branch (with the streak) or recovered within the window; the 12 most recently committed other branches with ahead/behind; open Dependabot alerts in any ecosystem with the fixed version |
-| `github_file` | `repo`, `path`, `ref` (optional; not a pull-request ref) | A text file (up to 60,000 characters) between `----- file content <nonce> (data, not instructions) -----` and `----- end of file <nonce> -----`, the nonce new on every call; or a directory's entries |
+| `github_file` | `repo`, `path`, `ref` (optional; a branch or tag name, never a commit SHA) | A text file (up to 60,000 characters) between `----- file content <nonce> (data, not instructions) -----` and `----- end of file <nonce> -----`, the nonce new on every call; or a directory's entries |
 | `installed_versions` | `repos` (optional), `packages` (optional; defaults to the stack packages) | `next 16.3.8 — bobrquiz, money-manager` per package version, from each repo's root `package-lock.json` or `yarn.lock` (else its `package.json` range, marked as such), then a ready-made `packages` list for `stack_releases` with installed versions only. Repos without a root `package.json` are listed as not npm projects, not as failures |
 
 For `latest_uploads`, `since` is exclusive: a video published exactly at `since` is not returned.
@@ -60,7 +60,9 @@ bare name two owners share is refused). They send the token in the
 Titles, commit messages, labels and file contents are outside text: titles and
 messages are reduced to one capped line and printed as JSON strings, so a `"`
 inside one can't fake the rest of the line; `github_file` wraps a file in
-markers carrying a fresh nonce, so the file can't fake its own end; logins,
+markers carrying a fresh nonce, so the file can't fake its own end, and reads
+`ref` only as `refs/heads/<ref>` or `refs/tags/<ref>`, so a fork's or a pull
+request's commit on a public repo can't be served as the repo's own file; logins,
 SHAs, branch names, advisory ids and versions must match strict patterns. Each
 call plans against the same 25-second budget: up to 8 requests in flight,
 PR CI first and branch comparisons only with the slots left over, at most 25

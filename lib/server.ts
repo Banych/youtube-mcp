@@ -260,7 +260,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           inputSchema: z.object({
             repo: z.string().min(1).max(140).describe("owner/name or just name; must be in GH_REPOS"),
             path: z.string().min(1).max(300).describe("Path in the repo, e.g. PRIORITIES.md or docs/"),
-            ref: z.string().min(1).max(200).optional().describe("Branch, tag or commit; defaults to the default branch."),
+            ref: z.string().min(1).max(200).optional().describe("A branch or tag name (not a commit SHA); defaults to the default branch."),
           }),
           annotations: readOnly,
         },
@@ -269,7 +269,7 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           if ("content" in setup) return setup;
           const clean = path.replace(/\/+$/, "") || ".";
           if (!isSafePath(clean) || (ref !== undefined && !isSafeRef(ref))) {
-            return fail("Path or ref not accepted: use a relative path without \"..\" and a plain branch, tag or commit (no pull-request refs).");
+            return fail("Path or ref not accepted: use a relative path without \"..\" and a branch or tag name (not a SHA or a refs/… path).");
           }
           try {
             const text = await readFile(setup.token, setup.repos[0], clean === "." ? "" : clean, ref, {

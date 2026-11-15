@@ -260,6 +260,26 @@ describe("readers", () => {
     expect(readDependabot("Bump the npm_and_yarn group across 1 directory with 3 updates", "no list")).toMatchObject({ updates: [], kind: "other" });
   });
 
+  it("ignores update lines quoted from upstream release notes", () => {
+    const body = [
+      "Updates `next` from 16.4.3 to 16.4.5",
+      "<details>",
+      "<summary>Release notes</summary>",
+      "<blockquote>",
+      "Updates `react` from 18.0.0 to 99.0.0",
+      "</blockquote>",
+      "</details>",
+    ].join("\n");
+    expect(readDependabot("Bump the next group with 1 update", body)).toMatchObject({
+      updates: [{ pkg: "next", from: "16.4.3", to: "16.4.5", kind: "patch" }],
+      kind: "patch",
+    });
+  });
+
+  it("stores lockfile versions normalised, never raw", () => {
+    expect(versionsFromLock({ packages: { "node_modules/next": { version: "\n  ^^vv16.4.3\n" } } }, ["next"])).toEqual(new Map([["next", ["16.4.3"]]]));
+  });
+
   it("takes the latest check per name", () => {
     expect(readChecks({ check_runs: [{ id: 1, name: "t", status: "completed", conclusion: "failure" }, { id: 2, name: "t", status: "completed", conclusion: "success" }] }))
       .toEqual({ ci: "passing", failing: [] });
@@ -357,9 +377,11 @@ describe("readers", () => {
     expect(isSafePath("PRIORITIES.md")).toBe(true);
     expect(isSafePath("docs/progress/a b.md")).toBe(true);
     for (const bad of ["../x", "a/../b", "/etc/passwd", "a\\b", "a\nb", "%2e%2e/x", "x?y", "x#y"]) expect(isSafePath(bad)).toBe(false);
-    expect(isSafeRef("main")).toBe(true);
-    expect(isSafeRef("v1.2.3")).toBe(true);
-    for (const bad of ["refs/pull/1/head", "pull/1/merge", "a&b=c", "a b"]) expect(isSafeRef(bad)).toBe(false);
+    // A name is read as refs/heads/<name> or refs/tags/<name> only, so "pull/1/head" or a SHA can only ever be a branch or tag.
+    for (const ok of ["main", "v1.2.3", "feat/x", "pull/1/head", "0123456789abcdef0123456789abcdef01234567"]) expect(isSafeRef(ok)).toBe(true);
+    for (const bad of ["refs/pull/1/head", "REFS/heads/main", "/refs/pull/1/head", "a//b", "a/../b", "x/", "a&b=c", "a b"]) {
+      expect(isSafeRef(bad)).toBe(false);
+    }
   });
 
   it("limits concurrency, frees slots when tasks throw, and serves foreground work first", async () => {
@@ -423,7 +445,7 @@ describe("activityReport", () => {
     expect(text).toContain('  Milestone "Later" · no due date');
     expect(text).toContain(`  Commits on master since ${SINCE}: 2`);
     expect(text).toContain('    eeeeeee 2026-11-14 Banych: "Keep the database awake"');
-    expect(text).toContain('    9999999 2026-11-14 Mal lory: "Say \\"hi\\""');
+    expect(text).toContain('    9999999 2026-11-14 "Mal: \\"lory\\"": "Say \\"hi\\""');
     expect(text).toContain('  CI on master: "CI" FAILING since 2026-11-13 (2 failed run(s) in a row)');
     expect(text).toContain('  CI on master: "Lint" recovered');
     expect(text).not.toContain("Fork CI");
@@ -453,7 +475,7 @@ describe("activityReport", () => {
     const { deps: d } = deps(routes);
     const { text } = await activityReport("t", [REPO], { since: SINCE, issueLimit: 1 }, d);
     expect(text).toContain("  Issues: 150 open");
-    expect(text).toContain("    …148 more, less recently updated");
+    expect(text).toContain("    …148 more not listed");
   });
 
   it("keeps going when parts fail, names each once, and says security is unknown without alerts", async () => {
@@ -474,8 +496,9 @@ describe("activityReport", () => {
     expect(text).not.toContain("Dependabot #124");
     // Statuses still give #109's CI when its check runs can't be read.
     expect(text).toContain('CI failing ("Vercel")');
+    // No repo failed, so only the parts line; its count is of parts, not repos.
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toMatch(/^github: \d+\/1 failed \(.*Dependabot alerts: no access/);
+    expect(logged[0]).toMatch(/^github parts: 4\/4 failed \(.*Dependabot alerts: no access/);
   });
 
   it("tells a rate limit apart from a missing permission, and retries the repo lookup once", async () => {
@@ -520,11 +543,21 @@ describe("activityReport", () => {
     expect(text).toContain("    (CI read for the 25 most recently updated PRs only)");
     expect(calls.filter((c) => c.url.includes("/check-runs")).length).toBe(25);
     expect(text).toContain("  Issues: 100+ open");
-    expect(text).toContain("    …90+ more, less recently updated");
+    expect(text).toContain("    …90+ more not listed");
     expect(text).toContain(`  Commits on master since ${SINCE}: 30+`);
     expect(text).toContain("    …22 more");
     expect(text).toContain("  Dependabot alerts: 100+ open");
     expect(text).toContain("    …94 more");
+  });
+
+  it("puts the + of a full page of human PRs on the count", async () => {
+    const routes = bobrquizRoutes();
+    routes[r("/pulls?state=open&sort=updated&direction=desc&per_page=100")] = json(
+      Array.from({ length: 100 }, (_, i) => ({ number: 3000 + i, title: `PR ${i}`, user: { login: "Banych" }, head: { sha: "x" }, labels: [] })),
+    );
+    const { deps: d } = deps(routes);
+    const { text } = await activityReport("t", [REPO], { since: SINCE, issueLimit: 10 }, d);
+    expect(text).toContain("  PRs: 100+ open\n");
   });
 
   it("compares only the 12 newest branches and counts the rest", async () => {
@@ -613,7 +646,7 @@ describe("readFile", () => {
       { name: "sub", type: "dir", sha: "y" },
     ]);
     const { deps: d } = deps({
-      [url("docs?ref=main")]: file(listing, "application/json; charset=utf-8"),
+      [url("docs?ref=refs%2Fheads%2Fmain")]: file(listing, "application/json; charset=utf-8"),
       [url("empty")]: file("[]", "application/json; charset=utf-8"),
       [url("data.json")]: file(listing),
       [url("vendor")]: file(json({ type: "submodule", sha: "z" }), "application/json"),
@@ -624,6 +657,25 @@ describe("readFile", () => {
     expect(await readFile("t", "Banych/claude-config", "empty", undefined, d)).toBe("Banych/claude-config:empty is a directory with 0 entr(y/ies):");
     expect((await readFile("t", "Banych/claude-config", "data.json", undefined, d)).split("\n")[2]).toBe(listing);
     expect(await readFile("t", "Banych/claude-config", "vendor", undefined, d)).toBe("Banych/claude-config:vendor is a submodule; nothing to show");
+  });
+
+  it("reads a ref as a branch, then as a tag, never as a bare SHA", async () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const { deps: d, calls } = deps({ [url("a.md?ref=refs%2Ftags%2Fv1.0.0")]: file("tagged") });
+    expect((await readFile("t", "Banych/claude-config", "a.md", "v1.0.0", d, () => "n")).split("\n")[2]).toBe("tagged");
+    await expect(readFile("t", "Banych/claude-config", "a.md", sha, d)).rejects.toMatchObject({ status: 404 });
+    expect(calls.map((c) => c.url.slice(c.url.indexOf("?")))).toEqual([
+      "?ref=refs%2Fheads%2Fv1.0.0",
+      "?ref=refs%2Ftags%2Fv1.0.0",
+      `?ref=refs%2Fheads%2F${sha}`,
+      `?ref=refs%2Ftags%2F${sha}`,
+    ]);
+  });
+
+  it("says a cut file's size is a lower bound when the server didn't declare it", async () => {
+    const { deps: d } = deps({ [url("big.log")]: () => new Response("y".repeat(300_000), { headers: { "content-type": "application/vnd.github.raw" } }) });
+    const head = (await readFile("t", "Banych/claude-config", "big.log", undefined, d, () => "n")).split("\n")[0];
+    expect(head).toMatch(/^Banych\/claude-config:big\.log · over \d+ bytes, first 60000 characters shown$/);
   });
 
   it("throws GitHub's error for the caller to report", async () => {
@@ -668,6 +720,29 @@ describe("installedVersions", () => {
     expect(text).toContain("Left out (ranges, not installed versions): next ^16.3.8");
     // No request for a lockfile that the root listing didn't show.
     expect(calls.some((c) => c.url.endsWith("money-manager/contents/package-lock.json"))).toBe(false);
+  });
+
+  it("keeps a lockfile version apart from an identical package.json pin", async () => {
+    const { deps: d } = deps({
+      [raw("Banych/a", "")]: root("package.json"),
+      [raw("Banych/a", "package.json")]: json({ dependencies: { next: "16.4.3" } }),
+      [raw("Banych/b", "")]: root("package.json", "package-lock.json"),
+      [raw("Banych/b", "package-lock.json")]: json({ packages: { "node_modules/next": { version: "16.4.3" } } }),
+    });
+    const { text } = await installedVersions("t", ["Banych/a", "Banych/b"], ["next"], d);
+    expect(text).toContain("next 16.4.3 — b\n");
+    expect(text).toContain("next 16.4.3 — a (package.json range)");
+    expect(text).toContain('For stack_releases packages: [{"name":"next","version":"16.4.3"}]');
+  });
+
+  it("names what doesn't fit stack_releases' 40 packages", async () => {
+    const names = Array.from({ length: 41 }, (_, i) => `p${i}`);
+    const { deps: d } = deps({
+      [raw("Banych/a", "")]: root("package.json", "package-lock.json"),
+      [raw("Banych/a", "package-lock.json")]: json({ packages: Object.fromEntries(names.map((n) => [`node_modules/${n}`, { version: "1.0.0" }])) }),
+    });
+    const { text } = await installedVersions("t", ["Banych/a"], names, d);
+    expect(text).toContain("Left out (stack_releases takes 40): p40 1.0.0");
   });
 
   it("falls back to package.json when the lockfile can't be read, and says so", async () => {
