@@ -407,8 +407,8 @@ export async function stackReport(since: string, packages: PackageVersion[], dep
       const feed = parseReleases(await getWithRetry(releasesFeedUrl(repo), deps), pkg, repo, since);
       report.releases.push(...feed.releases);
       // A feed whose every entry was skipped was not read, whatever its HTTP status said.
-      if (feed.entries && feed.badLinks === feed.entries) report.failedRepos++;
-      if (feed.movedTo) {
+      if (feed.entries && feed.badLinks + feed.badDates === feed.entries) report.failedRepos++;
+      if (feed.movedTo && feed.badLinks) {
         report.errors.push({
           source: repo,
           error: `${feed.badLinks} of ${feed.entries} entr(y/ies) skipped: the feed now belongs to ${feed.movedTo} (repo renamed or moved); update STACK`,

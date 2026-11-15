@@ -49,8 +49,8 @@ needed) and asks [OSV](https://osv.dev) for advisories. Limits worth knowing:
   package name, are listed as not checked without failing the call.
 - Details are fetched for up to 50 advisories; any beyond that are still listed by
   id. An advisory whose details fail is listed with the error.
-- Outside values are checked before they are printed: ids, versions, severities
-  and npm package names must match a strict pattern or are dropped; release URLs
+- Outside values are checked before they are printed: ids, versions, severities,
+  npm package names and the repo a moved feed names must match a strict pattern or are dropped; release URLs
   are rebuilt from the validated tag; quoted text (lines starting `notes:` and
   `summary:`) and error messages are reduced to one capped line by an allow-list
   (letters, digits, punctuation, symbols, marks, spaces; joiners and

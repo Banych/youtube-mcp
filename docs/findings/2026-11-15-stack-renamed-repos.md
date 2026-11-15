@@ -50,8 +50,10 @@ The feeds themselves are well-formed. The parser did what it was written to do.
   `movedTo`. The entry-link guard is unchanged.
 - `stackReport` reports a moved feed as `N of N entr(y/ies) skipped: the feed
   now belongs to <owner/name> (repo renamed or moved); update STACK`. It also
-  counts any feed where every entry was skipped as a failed repo, so the
-  heading shows "9/10 repos read" instead of "10/10". `isError` is still set
+  counts any feed where every entry was skipped (bad link or bad date) as a
+  failed repo, so the incident's heading would have read "8/10 repos read"
+  instead of "10/10". The moved line is printed only when entries were
+  skipped. `isError` is still set
   only when all repos fail.
 - The test fixture is the real head and first entry of the `facebook/react`
   feed as fetched on 2026-11-15.

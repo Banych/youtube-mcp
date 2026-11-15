@@ -487,6 +487,7 @@ describe("review round three: the remaining paths into the output", () => {
     const parsed = parseReleases(cased, "typescript", "microsoft/TypeScript", SINCE);
     expect(parsed.releases.map((r) => r.version)).toEqual(["5.9.3"]);
     expect(parsed.releases[0].url).toBe("https://github.com/microsoft/TypeScript/releases/tag/v5.9.3");
+    expect(parsed.movedTo).toBeNull();
 
     const elsewhere = releasesFeed("someone/else", [{ tag: "v1.0.0", updated: "2026-11-05T10:00:00Z", html: "" }]);
     expect(parseReleases(elsewhere, "typescript", "microsoft/TypeScript", SINCE).badLinks).toBe(1);
@@ -597,11 +598,33 @@ describe("a renamed repo (react and prisma, 2026-11-15)", () => {
   });
 
   it("does not take a malformed repo name from the feed", () => {
-    const forged = REACT_FEED_AFTER_RENAME.replace(
-      'href="https://github.com/react/react/releases"/>',
-      'href="https://github.com/react/re%0A!%20act/releases"/>',
+    for (const bad of ["react/re%0A!%20act", "react/re&#10;!act", "react/.."]) {
+      const forged = REACT_FEED_AFTER_RENAME.replace(
+        'href="https://github.com/react/react/releases"/>',
+        `href="https://github.com/${bad}/releases"/>`,
+      );
+      expect(parseReleases(forged, "react", "facebook/react", OCT).movedTo).toBeNull();
+    }
+  });
+
+  it("says nothing about a move when the entries still read", async () => {
+    const feed = releasesFeed("vercel/next.js", NEXT_ENTRIES).replace(
+      'href="https://github.com/vercel/next.js/releases"/>',
+      'href="https://github.com/vercel/next/releases"/>',
     );
-    expect(parseReleases(forged, "react", "facebook/react", OCT).movedTo).toBeNull();
+    const { fetch } = fakeFetch({ [releasesFeedUrl(STACK.next)]: feed });
+    const report = await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.releases.map((r) => r.version)).toEqual(["16.4.2"]);
+    expect(report.errors.filter((e) => e.source === STACK.next)).toEqual([]);
+  });
+
+  it("counts a feed skipped for links and dates together as not read", async () => {
+    const feed = releasesFeed("vercel/next.js", NEXT_ENTRIES.slice(0, 2))
+      .replace("<updated>2026-11-06T10:00:00Z</updated>\n    <link", "<updated>not a date</updated>\n    <link")
+      .replace("https://github.com/vercel/next.js/releases/tag/v16.4.2", "https://evil.example/v16.4.2");
+    const { fetch } = fakeFetch({ [releasesFeedUrl(STACK.next)]: feed });
+    const report = await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.failedRepos).toBe(Object.keys(STACK).length);
   });
 
   it("counts a moved repo as not read and says where it went", async () => {
