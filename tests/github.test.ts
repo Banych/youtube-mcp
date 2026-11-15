@@ -501,6 +501,21 @@ describe("activityReport", () => {
     expect(logged[0]).toMatch(/^github parts: 4\/4 failed \(.*Dependabot alerts: no access/);
   });
 
+  it("reports Dependabot alerts switched off as a fact, and passes on GitHub's own reason", async () => {
+    const routes = bobrquizRoutes();
+    const forbidden = (message: string) => () => new Response(json({ message, documentation_url: "https://docs.github.com" }), { status: 403 });
+    routes[r("/dependabot/alerts?state=open&per_page=100")] = forbidden("Dependabot alerts are disabled for this repository.");
+    routes[r("/milestones?state=open&sort=due_on&direction=asc&per_page=20")] = forbidden("Resource not accessible by personal access token");
+    routes[r(`/commits?sha=master&since=${encodeURIComponent(SINCE)}&per_page=30`)] = forbidden("Repository access blocked");
+    const { deps: d } = deps(routes);
+    const { text } = await activityReport("t", [REPO], { since: SINCE, issueLimit: 10 }, d);
+    expect(text).toContain("  Dependabot alerts: off in this repo's settings");
+    expect(text).not.toContain("! Dependabot alerts");
+    expect(text).toContain("Dependabot (security unknown: alerts off, 3 major");
+    expect(text).toContain("  ! milestones: no access (HTTP 403): the token lacks this permission");
+    expect(text).toContain("  ! commits: no access (HTTP 403): Repository access blocked");
+  });
+
   it("tells a rate limit apart from a missing permission, and retries the repo lookup once", async () => {
     const routes = bobrquizRoutes();
     let tries = 0;

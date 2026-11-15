@@ -31,20 +31,32 @@ export function logFailures(deps: Deps, what: string, total: number, errors: str
 }
 
 export class HttpError extends Error {
-  /** rateLimited: a 429, or a 403 that carries GitHub's rate-limit headers rather than a missing permission. */
+  /**
+   * rateLimited: a 429, or a 403 that carries GitHub's rate-limit headers rather than a missing permission.
+   * detail: the server's own explanation (a JSON body's "message", as GitHub sends), one capped line, or "".
+   */
   constructor(
     readonly status: number,
     readonly rateLimited = false,
+    readonly detail = "",
   ) {
     super(`HTTP ${status}`);
   }
 }
 
-const httpError = (res: Response) =>
-  new HttpError(
-    res.status,
-    res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after"))),
-  );
+async function httpError(res: Response): Promise<HttpError> {
+  let detail = "";
+  try {
+    const body: unknown = JSON.parse((await res.text()).slice(0, 4000));
+    const message = body && typeof body === "object" ? (body as { message?: unknown }).message : undefined;
+    if (typeof message === "string") detail = oneLine(message, 120);
+  } catch {
+    // No JSON explanation: the status alone has to do.
+  }
+  const rateLimited =
+    res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after")));
+  return new HttpError(res.status, rateLimited, detail);
+}
 
 /** Runs one request under the call's budget: the timeout shrinks to what is left, and running out says so. */
 async function budgeted<T>(deps: Deps, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -64,7 +76,7 @@ async function budgeted<T>(deps: Deps, fn: (signal: AbortSignal) => Promise<T>):
 export async function get(url: string, deps: Deps, init?: RequestInit): Promise<string> {
   return budgeted(deps, async (signal) => {
     const res = await deps.fetch(url, { ...init, signal });
-    if (!res.ok) throw httpError(res);
+    if (!res.ok) throw await httpError(res);
     return await res.text();
   });
 }
@@ -79,7 +91,7 @@ export type Capped = { text: string; type: string; bytes: number; cut: boolean; 
 export async function getCapped(url: string, deps: Deps, init: RequestInit, maxBytes: number): Promise<Capped> {
   return budgeted(deps, async (signal) => {
     const res = await deps.fetch(url, { ...init, signal });
-    if (!res.ok) throw httpError(res);
+    if (!res.ok) throw await httpError(res);
     const type = res.headers.get("content-type") ?? "";
     const declared = Number(res.headers.get("content-length") ?? NaN);
     const decoder = new TextDecoder();

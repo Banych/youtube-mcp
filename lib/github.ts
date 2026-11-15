@@ -157,7 +157,10 @@ export function githubError(e: unknown): string {
   if (e instanceof HttpError) {
     if (e.status === 401) return "token rejected (HTTP 401): check GITHUB_TOKEN";
     if (e.rateLimited) return `rate limited (HTTP ${e.status}): try again in a few minutes`;
-    if (e.status === 403) return "no access (HTTP 403): the token lacks this permission";
+    // GitHub says why: a missing token permission, or something else (a feature switched off, say).
+    if (e.status === 403) {
+      return `no access (HTTP 403): ${!e.detail || /personal access token/i.test(e.detail) ? "the token lacks this permission" : e.detail}`;
+    }
     if (e.status === 404) return "not found (HTTP 404): missing, or the token can't see it";
   }
   return errorMessage(e);
@@ -243,6 +246,8 @@ export type RepoActivity = {
   branchesMore: boolean;
   alerts: Alert[] | null;
   alertsMore: boolean;
+  /** Dependabot alerts are switched off in the repo's settings: nothing to read, and not an error. */
+  alertsOff: boolean;
   errors: string[];
 };
 
@@ -454,6 +459,7 @@ export async function repoActivity(ctx: Ctx, repo: string, opts: ActivityOptions
     branchesMore: false,
     alerts: null,
     alertsMore: false,
+    alertsOff: false,
     errors: [],
   };
   /** Each part fails on its own, as one "! part: reason" line; the first error of a repeated kind is kept. */
@@ -493,7 +499,15 @@ export async function repoActivity(ctx: Ctx, repo: string, opts: ActivityOptions
     part("workflow runs", () =>
       apiJson(ctx, `${r}/actions/runs?branch=${encodeURIComponent(branch)}&exclude_pull_requests=true&per_page=${PAGE}`),
     ),
-    part("Dependabot alerts", () => apiJson(ctx, `${r}/dependabot/alerts?state=open&per_page=${PAGE}`)),
+    part("Dependabot alerts", async () => {
+      try {
+        return await apiJson(ctx, `${r}/dependabot/alerts?state=open&per_page=${PAGE}`);
+      } catch (e) {
+        if (!(e instanceof HttpError && e.status === 403 && /alerts are disabled/i.test(e.detail))) throw e;
+        act.alertsOff = true;
+        return undefined;
+      }
+    }),
     part("milestones", () => apiJson(ctx, `${r}/milestones?state=open&sort=due_on&direction=asc&per_page=20`)),
   ]);
 
@@ -664,7 +678,7 @@ function formatDependabot(a: RepoActivity, bots: Pr[]): { head: string; lines: s
   const sec = bots.filter((p) => p.dependabot!.security).length;
   const grouped = bots.filter((p) => p.dependabot!.group).length;
   const parts = [
-    a.alerts === null ? "security unknown: alerts unreadable" : sec && `${sec} security`,
+    a.alertsOff ? "security unknown: alerts off" : a.alerts === null ? "security unknown: alerts unreadable" : sec && `${sec} security`,
     count("major") && `${count("major")} major`,
     count("minor") + count("patch") && `${count("minor") + count("patch")} minor/patch`,
     count("other") && `${count("other")} other`,
@@ -769,6 +783,7 @@ export function formatActivity(a: RepoActivity, since: string): string {
     lines.push(`  Branches, newest first: ${shown.join("; ") || "none besides the default"}${more}`);
   }
 
+  if (a.alertsOff) lines.push("  Dependabot alerts: off in this repo's settings");
   if (a.alerts) {
     lines.push(`  Dependabot alerts: ${a.alerts.length}${a.alertsMore ? "+" : ""} open`);
     for (const al of a.alerts.slice(0, 6)) {
