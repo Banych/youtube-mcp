@@ -71,7 +71,7 @@ describe("MCP endpoint", () => {
     expect(status).toBe(401);
   });
 
-  it("lists the four read-only tools", async () => {
+  it("lists the seven read-only tools", async () => {
     const handler = setup();
     await rpc(handler, "initialize", {
       protocolVersion: "2025-06-18",
@@ -81,7 +81,15 @@ describe("MCP endpoint", () => {
     const { status, json } = await rpc(handler, "tools/list");
     expect(status).toBe(200);
     const tools = json.result.tools as { name: string; annotations?: { readOnlyHint?: boolean } }[];
-    expect(tools.map((t) => t.name).sort()).toEqual(["latest_uploads", "list_channels", "porto_weather", "stack_releases"]);
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      "github_activity",
+      "github_file",
+      "installed_versions",
+      "latest_uploads",
+      "list_channels",
+      "porto_weather",
+      "stack_releases",
+    ]);
     expect(tools.every((t) => t.annotations?.readOnlyHint)).toBe(true);
   });
 
@@ -162,5 +170,31 @@ describe("MCP endpoint", () => {
     expect(text).toContain("1/1 channel(s) readable");
     expect(text).toContain(`Bravo (${CHANNEL_B})`);
     expect(text).toContain("! not-a-channel: not a channel ID, @handle or channel URL");
+  });
+
+  it("GitHub tools explain a missing token", async () => {
+    const result = await callTool(setup(), "github_activity");
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("GitHub tools not configured: set GITHUB_TOKEN on the server.");
+  });
+
+  it("GitHub tools refuse repos outside GH_REPOS", async () => {
+    const handler = setup({ githubToken: "t", githubRepos: "Banych/bobrquiz" });
+    const result = await callTool(handler, "github_file", { repo: "torvalds/linux", path: "README" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Not in GH_REPOS: torvalds/linux. Allowed: Banych/bobrquiz.");
+  });
+
+  it("github_file refuses a path that climbs out of the repo", async () => {
+    const handler = setup({ githubToken: "t", githubRepos: "Banych/bobrquiz" });
+    const result = await callTool(handler, "github_file", { repo: "bobrquiz", path: "../secrets" });
+    expect(result.isError).toBe(true);
+  });
+
+  it("github_activity reports an unreadable repo as a tool error", async () => {
+    const handler = setup({ githubToken: "t", githubRepos: "Banych/bobrquiz" });
+    const result = await callTool(handler, "github_activity", { since: "2026-10-30T00:00:00Z" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("0/1 repos read");
   });
 });
