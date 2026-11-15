@@ -55,8 +55,11 @@ export const FEED_B = feedXml(CHANNEL_B, "Bravo", [
   { id: "b0", title: "Bravo old", published: "2026-10-20T08:00:00+00:00" },
 ]);
 
+/** A route's answer: a body, an error status, or a function building the Response (for headers or POST bodies). */
+export type Route = string | number | ((init?: RequestInit) => Response);
+
 /** A fake fetch that serves fixed bodies by URL and records calls. */
-export function fakeFetch(routes: Record<string, string | number>) {
+export function fakeFetch(routes: Record<string, Route>) {
   const calls: { url: string; headers: Headers; init?: RequestInit }[] = [];
   const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -64,6 +67,7 @@ export function fakeFetch(routes: Record<string, string | number>) {
     const body = routes[url];
     if (body === undefined) return new Response("not found", { status: 404 });
     if (typeof body === "number") return new Response("error", { status: body });
+    if (typeof body === "function") return body(init);
     return new Response(body, { status: 200 });
   }) as typeof fetch;
   return { fetch: fn, calls };

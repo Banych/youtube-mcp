@@ -3,7 +3,17 @@ import { z } from "zod";
 import { authorize } from "./auth";
 import { parseChannelList } from "./channels";
 import type { Video } from "./feed";
-import { activityReport, installedVersions, isSafePath, parseRepoList, pickRepos, readFile, STACK_PACKAGES, githubError } from "./github";
+import {
+  activityReport,
+  githubError,
+  installedVersions,
+  isSafePath,
+  isSafeRef,
+  parseRepoList,
+  pickRepos,
+  readFile,
+  STACK_PACKAGES,
+} from "./github";
 import { formatStack, NPM_NAME, STACK, stackReport } from "./stack";
 import { formatForecast, getForecast, localDate, PORTO } from "./weather";
 import { errorMessage, type Deps } from "./http";
@@ -204,10 +214,11 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           title: "GitHub activity",
           description:
             "Read-only overview of the configured GitHub repos (GH_REPOS), one block per repo: open PRs with author, dates " +
-            "and CI state (Dependabot PRs counted by kind, listed only when security-related or a failing major bump), " +
-            "open issues with label counts (new and blocker/critical/security-labelled ones always listed), commits on the " +
-            "default branch since `since`, workflows failing on the default branch (or recovered within the window), " +
-            "other branches with ahead/behind counts and last commit date, and open Dependabot alerts. " +
+            "and CI state of the head commit (check runs and commit statuses, so Vercel counts); Dependabot PRs counted by kind " +
+            "(listed only when security-related, labelled as a blocker, or a major bump with failing CI); open issues with label " +
+            "counts and milestones (new and blocker/critical/security-labelled ones always listed); open milestones with due dates; " +
+            "commits on the default branch since `since`; workflows failing on the default branch (or recovered within the window); " +
+            "the most recently committed other branches with ahead/behind counts; and open Dependabot alerts. " +
             "Lines starting with ! are errors for that repo. " + QUOTED,
           inputSchema: z.object({
             since: z.iso
@@ -244,7 +255,8 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           title: "GitHub file",
           description:
             "One text file (or a directory listing) from a configured GitHub repo, e.g. PRIORITIES.md in claude-config. " +
-            "Up to 60,000 characters. " + QUOTED,
+            "Up to 60,000 characters, between markers that carry a nonce new on every call: only the end marker with the same " +
+            "nonce ends the file. " + QUOTED,
           inputSchema: z.object({
             repo: z.string().min(1).max(140).describe("owner/name or just name; must be in GH_REPOS"),
             path: z.string().min(1).max(300).describe("Path in the repo, e.g. PRIORITIES.md or docs/"),
@@ -256,8 +268,8 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           const setup = githubSetup(getConfig(), [repo]);
           if ("content" in setup) return setup;
           const clean = path.replace(/\/+$/, "") || ".";
-          if (!isSafePath(clean) || (ref !== undefined && !/^[A-Za-z0-9._\/+@-]{1,200}$/.test(ref))) {
-            return fail("Path or ref not accepted: use a relative path without \"..\" and a plain branch, tag or commit.");
+          if (!isSafePath(clean) || (ref !== undefined && !isSafeRef(ref))) {
+            return fail("Path or ref not accepted: use a relative path without \"..\" and a plain branch, tag or commit (no pull-request refs).");
           }
           try {
             const text = await readFile(setup.token, setup.repos[0], clean === "." ? "" : clean, ref, {
@@ -277,7 +289,8 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           title: "Installed versions",
           description:
             "The versions of the stack packages (or the ones you name) that each configured repo installs, from its root " +
-            "package-lock.json, falling back to package.json ranges; ends with a ready-made `packages` list for stack_releases.",
+            "package-lock.json or yarn.lock, falling back to package.json ranges; ends with a ready-made `packages` list for " +
+            "stack_releases (installed versions only). Repos without a root package.json are named as not npm projects.",
           inputSchema: z.object({
             repos: z.array(z.string().min(1).max(140)).max(20).optional().describe("Defaults to all of GH_REPOS."),
             packages: z
@@ -294,11 +307,11 @@ export function createServer(getConfig: () => Config, deps: Deps) {
           const wanted = packages?.length ? [...new Set(packages)] : STACK_PACKAGES;
           const bad = wanted.filter((n) => !NPM_NAME.test(n));
           if (bad.length) return fail(`Not npm package names: ${bad.map((b) => JSON.stringify(b.slice(0, 60))).join(", ")}`);
-          const { text, failed } = await installedVersions(setup.token, setup.repos, wanted, {
+          const { text, failed, npmRepos } = await installedVersions(setup.token, setup.repos, wanted, {
             ...deps,
             deadline: Date.now() + CALL_BUDGET_MS,
           });
-          return { ...(failed === setup.repos.length ? { isError: true } : {}), content: [{ type: "text", text }] };
+          return { ...(npmRepos > 0 && failed === npmRepos ? { isError: true } : {}), content: [{ type: "text", text }] };
         },
       );
     },
