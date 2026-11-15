@@ -72,7 +72,19 @@ are private). Not yet run on Vercel.
    private check runs. GitHub sent no `github-authentication-token-expiration`
    header for it.
 
-## Still open
+## Production, first brief run
 
-- The tools have not been called on Vercel; that needs `GITHUB_TOKEN` and
-  `GH_REPOS` in Production and the merge.
+- Deployment dpl_GDCDNdD4W8RVgWHRMWZyGi8pTLCJ (merge commit 078254a),
+  created 41 s after `GITHUB_TOKEN` was added; `GH_REPOS` was set before it.
+  Unauthenticated POST to `/api/mcp`: 401.
+- The new regular scheduled task (claude.ai, no repos attached) ran once by
+  hand at 16:58 UTC and republished the Morning Brief: sources GitHub `ok`
+  "5/5", Priorities `ok`, Stack news `ok`, `generated_at` from a real clock.
+  Its GitHub items (money-manager security PR 61, 7 bobrquiz alerts,
+  money-manager PR 21 failing "quality" and "Vercel") match the local run.
+- Runtime logs for the run: no `github` warning lines (no repo or part
+  failed), no token in any line. One unrelated warning from
+  `stack_releases`: "2/11 failed", prisma/prisma and facebook/react feeds
+  had 10 of 10 entries with no link into the repo's releases. Cause unknown.
+- Hobby keeps runtime logs for one hour: a 60-minute window is refused with
+  400, so read them within the hour after a run, with `since: "30m"`.
