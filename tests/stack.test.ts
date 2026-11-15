@@ -45,7 +45,7 @@ ${entries
 </feed>`;
 }
 
-const NEXT_FEED = releasesFeed("vercel/next.js", [
+const NEXT_ENTRIES = [
   { tag: "v16.5.0-canary.3", updated: "2026-11-06T10:00:00Z", html: "<p>canary</p>" },
   {
     tag: "v16.4.2",
@@ -53,7 +53,8 @@ const NEXT_FEED = releasesFeed("vercel/next.js", [
     html: "<h3>Core Changes</h3><ul><li>Fix a security issue in middleware (CVE-2026-12345) &amp; more</li></ul>",
   },
   { tag: "v16.4.1", updated: "2026-10-14T10:00:00Z", html: "<p>older than the window</p>" },
-]);
+];
+const NEXT_FEED = releasesFeed("vercel/next.js", NEXT_ENTRIES);
 
 const VITE_FEED = releasesFeed("vitejs/vite", [
   { tag: "create-vite@8.0.0", updated: "2026-11-04T09:00:00Z", html: "<p>scaffolder</p>" },
@@ -255,7 +256,7 @@ describe("stackReport", () => {
     expect(report.clean).toEqual([{ name: "react", version: "19.2.0" }]);
     // Repos without a fixture answer 404; vue's "latest" is not checkable.
     expect(report.errors).toContainEqual({ source: "vue@latest", error: "not an exact version (x.y.z), not checked" });
-    expect(report.errors).toContainEqual({ source: "facebook/react", error: "HTTP 404 (3 tries)" });
+    expect(report.errors).toContainEqual({ source: STACK.react, error: "HTTP 404 (3 tries)" });
     expect(report.failedRepos).toBe(Object.keys(STACK).length - 2);
     expect(report.checked).toBe(2);
 
@@ -366,7 +367,7 @@ describe("formatStack", () => {
     expect(text).toContain("react 19.2.0 · no known advisories");
     expect(lines[2]).toBe("    notes: Core Changes Fix a security issue in middleware (CVE-2026-12345) & more");
     expect(text).toContain("    summary: Next.js middleware authorization bypass");
-    expect(text).toContain("! facebook/react: HTTP 404 (3 tries)");
+    expect(text).toContain(`! ${STACK.react}: HTTP 404 (3 tries)`);
   });
 });
 
@@ -493,9 +494,9 @@ describe("review round three: the remaining paths into the output", () => {
 
   it("reports an entry without a usable link as an error line", async () => {
     const { fetch } = fakeFetch({
-      [releasesFeedUrl("vercel/next.js")]: releasesFeed("someone/else", [
+      [releasesFeedUrl("vercel/next.js")]: releasesFeed("vercel/next.js", [
         { tag: "v16.4.2", updated: "2026-11-05T10:00:00Z", html: "" },
-      ]),
+      ]).replace("https://github.com/vercel/next.js/releases/tag/", "https://evil.example/vercel/next.js/releases/tag/"),
     });
     const report = await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
     expect(report.errors).toContainEqual({
@@ -543,5 +544,88 @@ describe("review round four", () => {
     ]);
     expect(report.clean).toEqual([{ name: "JSONStream", version: "1.3.5" }]);
     expect(report.errors).toContainEqual({ source: "-", error: "not an npm package name, not checked" });
+  });
+});
+
+/**
+ * A real excerpt: the head and first entry of https://github.com/facebook/react/releases.atom,
+ * fetched 2026-11-15. GitHub answered 301 to https://github.com/react/react/releases.atom
+ * (the repo was renamed), and every link in the feed names react/react.
+ */
+const REACT_FEED_AFTER_RENAME = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xml:lang="en-US">
+  <id>tag:github.com,2008:https://github.com/react/react/releases</id>
+  <link type="text/html" rel="alternate" href="https://github.com/react/react/releases"/>
+  <link type="application/atom+xml" rel="self" href="https://github.com/react/react/releases.atom"/>
+  <title>Release notes from react</title>
+  <updated>2026-10-14T16:31:33Z</updated>
+  <entry>
+    <id>tag:github.com,2008:Repository/10270250/v19.3.1</id>
+    <updated>2026-10-14T17:06:15Z</updated>
+    <link rel="alternate" type="text/html" href="https://github.com/react/react/releases/tag/v19.3.1"/>
+    <title>19.3.1 (October 14th, 2026)</title>
+    <content type="html">&lt;h2&gt;React Server Components&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Improve transport protocol (&lt;a href=&quot;https://github.com/facebook/react/pull/37845&quot; data-hovercard-type=&quot;pull_request&quot; data-hovercard-url=&quot;/react/react/pull/37845/hovercard&quot;&gt;#37845&lt;/a&gt; by &lt;a class=&quot;user-mention notranslate&quot; data-hovercard-type=&quot;user&quot; data-hovercard-url=&quot;/users/unstubbable/hovercard&quot; data-octo-click=&quot;hovercard-link-click&quot; data-octo-dimensions=&quot;link_type:self&quot; href=&quot;https://github.com/unstubbable&quot;&gt;@unstubbable&lt;/a&gt; and &lt;a class=&quot;user-mention notranslate&quot; data-hovercard-type=&quot;user&quot; data-hovercard-url=&quot;/users/eps1lon/hovercard&quot; data-octo-click=&quot;hovercard-link-click&quot; data-octo-dimensions=&quot;link_type:self&quot; href=&quot;https://github.com/eps1lon&quot;&gt;@eps1lon&lt;/a&gt;)&lt;/li&gt;
+&lt;/ul&gt;</content>
+    <author>
+      <name>eps1lon</name>
+    </author>
+    <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/12292047?s=60&amp;v=4"/>
+  </entry>
+</feed>`;
+
+describe("a renamed repo (react and prisma, 2026-11-15)", () => {
+  const OCT = "2026-10-01T00:00:00Z";
+
+  it("follows the repos to their new names", () => {
+    expect(STACK.react).toBe("react/react");
+    expect(STACK.prisma).toBe("prisma/orm");
+  });
+
+  it("reads the real feed under the repo's new name", () => {
+    const parsed = parseReleases(REACT_FEED_AFTER_RENAME, "react", "react/react", OCT);
+    expect(parsed).toMatchObject({ entries: 1, badLinks: 0, movedTo: null });
+    expect(parsed.releases.map((r) => [r.version, r.url])).toEqual([
+      ["19.3.1", "https://github.com/react/react/releases/tag/v19.3.1"],
+    ]);
+  });
+
+  it("names the new repo when the feed answers for another one", () => {
+    const parsed = parseReleases(REACT_FEED_AFTER_RENAME, "react", "facebook/react", OCT);
+    expect(parsed).toMatchObject({ releases: [], entries: 1, badLinks: 1, movedTo: "react/react" });
+  });
+
+  it("does not take a malformed repo name from the feed", () => {
+    const forged = REACT_FEED_AFTER_RENAME.replace(
+      'href="https://github.com/react/react/releases"/>',
+      'href="https://github.com/react/re%0A!%20act/releases"/>',
+    );
+    expect(parseReleases(forged, "react", "facebook/react", OCT).movedTo).toBeNull();
+  });
+
+  it("counts a moved repo as not read and says where it went", async () => {
+    const { fetch } = fakeFetch({ [releasesFeedUrl(STACK.next)]: releasesFeed("vercel/next", NEXT_ENTRIES) });
+    const report = await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.errors).toContainEqual({
+      source: "vercel/next.js",
+      error: "3 of 3 entr(y/ies) skipped: the feed now belongs to vercel/next (repo renamed or moved); update STACK",
+    });
+    expect(report.failedRepos).toBe(Object.keys(STACK).length);
+  });
+
+  it("counts a feed whose every entry was skipped as not read", async () => {
+    const { fetch } = fakeFetch({
+      [releasesFeedUrl(STACK.next)]: releasesFeed("vercel/next.js", NEXT_ENTRIES).replaceAll(
+        "https://github.com/vercel/next.js/releases/tag/",
+        "https://evil.example/vercel/next.js/releases/tag/",
+      ),
+    });
+    const report = await stackReport(SINCE, [], { fetch, retryDelaysMs: [0, 0] });
+    expect(report.errors).toContainEqual({
+      source: "vercel/next.js",
+      error: "3 of 3 entr(y/ies) had no link into this repo's releases and were skipped",
+    });
+    expect(report.failedRepos).toBe(Object.keys(STACK).length);
   });
 });

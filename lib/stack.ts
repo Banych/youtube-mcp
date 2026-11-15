@@ -7,12 +7,14 @@ export const STACK: Record<string, string> = {
   next: "vercel/next.js",
   vue: "vuejs/core",
   nuxt: "nuxt/nuxt",
-  react: "facebook/react",
+  // Renamed from facebook/react; GitHub redirects the old feed URL (seen 2026-11-15).
+  react: "react/react",
   typescript: "microsoft/TypeScript",
   vite: "vitejs/vite",
   vitest: "vitest-dev/vitest",
   tailwindcss: "tailwindlabs/tailwindcss",
-  prisma: "prisma/prisma",
+  // Renamed from prisma/prisma; GitHub redirects the old feed URL (seen 2026-11-15).
+  prisma: "prisma/orm",
   "@supabase/supabase-js": "supabase/supabase-js",
 };
 
@@ -73,10 +75,12 @@ const parser = new XMLParser({
   trimValues: true,
 });
 
+type AtomLink = { "@_href"?: string; "@_rel"?: string };
+
 type AtomEntry = {
   updated?: string;
   title?: unknown;
-  link?: { "@_href"?: string }[];
+  link?: AtomLink[];
   content?: unknown;
 };
 
@@ -166,15 +170,33 @@ export type ParsedFeed = {
   badDates: number;
   /** Entries skipped because no link pointed into this repo's releases. */
   badLinks: number;
+  /**
+   * The repo the feed says it belongs to, when that is not `repo`: GitHub redirects a renamed
+   * repo's feed, and every link in it then names the new repo. Null when the feed names `repo`
+   * or names nothing well-formed.
+   */
+  movedTo: string | null;
 };
+
+/** owner/name as GitHub allows them; anything else from a feed is not repeated. */
+const REPO_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.+$)[A-Za-z0-9._-]{1,100}$/;
+
+/** The repo named by the feed's own `<link rel="alternate" href="https://github.com/<repo>/releases">`. */
+function feedRepo(links: AtomLink[] | undefined): string | null {
+  const href = links?.find((l) => l["@_rel"] === "alternate")?.["@_href"] ?? "";
+  const repo = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases$/.exec(href)?.[1];
+  return repo && REPO_NAME.test(repo) ? repo : null;
+}
 
 /** Stable releases published at or after `since`; times compared as instants, not as text. */
 export function parseReleases(xml: string, pkg: string, repo: string, since: string): ParsedFeed {
-  const doc = parser.parse(xml) as { feed?: { entry?: AtomEntry[] } };
+  const doc = parser.parse(xml) as { feed?: { entry?: AtomEntry[]; link?: AtomLink[] } };
   if (!doc.feed) throw new Error("not a releases feed");
   const sinceMs = Date.parse(since);
   const entries = doc.feed.entry ?? [];
-  const parsed: ParsedFeed = { releases: [], entries: entries.length, oldest: null, badDates: 0, badLinks: 0 };
+  const named = feedRepo(doc.feed.link);
+  const movedTo = named && named.toLowerCase() !== repo.toLowerCase() ? named : null;
+  const parsed: ParsedFeed = { releases: [], entries: entries.length, oldest: null, badDates: 0, badLinks: 0, movedTo };
   for (const e of entries) {
     const t = Date.parse(e.updated ?? "");
     if (Number.isNaN(t)) {
@@ -384,7 +406,14 @@ export async function stackReport(since: string, packages: PackageVersion[], dep
     try {
       const feed = parseReleases(await getWithRetry(releasesFeedUrl(repo), deps), pkg, repo, since);
       report.releases.push(...feed.releases);
-      if (feed.badLinks) {
+      // A feed whose every entry was skipped was not read, whatever its HTTP status said.
+      if (feed.entries && feed.badLinks === feed.entries) report.failedRepos++;
+      if (feed.movedTo) {
+        report.errors.push({
+          source: repo,
+          error: `${feed.badLinks} of ${feed.entries} entr(y/ies) skipped: the feed now belongs to ${feed.movedTo} (repo renamed or moved); update STACK`,
+        });
+      } else if (feed.badLinks) {
         report.errors.push({
           source: repo,
           error: `${feed.badLinks} of ${feed.entries} entr(y/ies) had no link into this repo's releases and were skipped`,

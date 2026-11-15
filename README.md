@@ -35,6 +35,13 @@ needed) and asks [OSV](https://osv.dev) for advisories. Limits worth knowing:
 - A feed holds only the latest 10 releases, prereleases included. When all 10 are
   newer than `since` (Next.js publishes canaries almost daily), the output says so
   with a `!` line, since older stable releases may be missing.
+- A renamed repo's feed still loads (GitHub redirects it), but every link in it
+  names the new repo, so none of its entries can be read. The output then says
+  `the feed now belongs to <owner/name> (repo renamed or moved); update STACK`,
+  and that repo counts as not read. React and Prisma moved this way
+  (`react/react`, `prisma/orm`, seen 2026-11-15).
+- Prisma publishes dev builds and release candidates several times a week, so its
+  10 entries can all be prereleases and no stable Prisma release shows up.
 - github.com can answer 429 to shared Vercel IPs; 404, 429 and 5xx are retried
   twice, as for the YouTube feeds.
 - Up to 40 package versions per call, deduplicated. Versions such as `^16.3.8` are
