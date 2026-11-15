@@ -33,8 +33,10 @@ are private). Not yet run on Vercel.
   and workflow runs answered 200 on both private repos. Effect: on a private
   repo, a pull request's CI comes from commit statuses only, and the activity
   report shows `! checks: no access (HTTP 403)`. Neither private repo had an
-  open pull request today, so this did not show in the run. Whether the
-  fine-grained token page offers a Checks permission is not yet known.
+  open pull request today, so this did not show in the run. **The
+  fine-grained token page offers no Checks permission** (its Repository
+  permissions list, read in full on 2026-11-15, goes from Attestations to Code
+  quality), so this gap is permanent for fine-grained tokens.
 - **"Dependabot alerts are disabled for this repository."** is a 403 with that
   message when alerts are off in the repo's settings (youtube-mcp,
   bedtime-bloopers, claude-config). It is not a missing permission; the tool
@@ -72,6 +74,5 @@ are private). Not yet run on Vercel.
 
 ## Still open
 
-- Checks permission for the private repos (see above).
 - The tools have not been called on Vercel; that needs `GITHUB_TOKEN` and
   `GH_REPOS` in Production and the merge.

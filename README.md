@@ -93,14 +93,15 @@ Fine-grained tokens → Generate new token:
 - Resource owner: your account. Expiration: up to a year (put a reminder in
   the calendar: the tools answer `token rejected (HTTP 401)` once it lapses).
 - Repository access: Only select repositories — the same ones as `GH_REPOS`.
-- Repository permissions, all **Read-only**: Actions, Checks (if offered),
-  Commit statuses, Contents, Dependabot alerts, Issues, Metadata (added
-  automatically), Pull requests. Nothing else, and no account permissions.
-  Commit statuses carry Vercel's deployment results; branches are listed and
-  compared through GraphQL, which needs only Contents. Private repos answer
-  403 for commits and files without Contents, and for check runs without
-  Checks; without Checks a pull request's CI there comes from commit statuses
-  alone, and the report says `! checks: no access`.
+- Repository permissions, all **Read-only**: Actions, Commit statuses,
+  Contents, Dependabot alerts, Issues, Metadata (added automatically), Pull
+  requests. Nothing else, and no account permissions. Commit statuses carry
+  Vercel's deployment results; branches are listed and compared through
+  GraphQL, which needs only Contents. Private repos answer 403 for commits and
+  files without Contents. Check runs on a private repo need a Checks
+  permission that fine-grained tokens don't offer, so a pull request's CI
+  there comes from commit statuses alone and the report says
+  `! checks: no access`. Public repos' check runs need no permission.
 
 Classic tokens work too but can't be limited to a few repos; prefer the
 fine-grained one.
