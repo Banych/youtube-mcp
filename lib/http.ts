@@ -31,25 +31,91 @@ export function logFailures(deps: Deps, what: string, total: number, errors: str
 }
 
 export class HttpError extends Error {
-  constructor(readonly status: number) {
+  /**
+   * rateLimited: a 429, or a 403 that carries GitHub's rate-limit headers rather than a missing permission.
+   * detail: the server's own explanation (a JSON body's "message", as GitHub sends), one capped line, or "".
+   */
+  constructor(
+    readonly status: number,
+    readonly rateLimited = false,
+    readonly detail = "",
+  ) {
     super(`HTTP ${status}`);
   }
 }
 
-/** GET (or the given method) with a timeout; non-2xx answers throw HttpError. */
-export async function get(url: string, deps: Deps, init?: RequestInit): Promise<string> {
+async function httpError(res: Response): Promise<HttpError> {
+  let detail = "";
+  try {
+    const body: unknown = JSON.parse((await res.text()).slice(0, 4000));
+    const message = body && typeof body === "object" ? (body as { message?: unknown }).message : undefined;
+    if (typeof message === "string") detail = oneLine(message, 120);
+  } catch {
+    // No JSON explanation: the status alone has to do.
+  }
+  const rateLimited =
+    res.status === 429 || (res.status === 403 && (res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after")));
+  return new HttpError(res.status, rateLimited, detail);
+}
+
+/** Runs one request under the call's budget: the timeout shrinks to what is left, and running out says so. */
+async function budgeted<T>(deps: Deps, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const left = timeLeft(deps);
   if (left <= 0) throw new Error("out of time");
   const timeout = deps.timeoutMs ?? 8000;
   try {
-    const res = await deps.fetch(url, { ...init, signal: AbortSignal.timeout(Math.min(timeout, left)) });
-    if (!res.ok) throw new HttpError(res.status);
-    return await res.text();
+    return await fn(AbortSignal.timeout(Math.min(timeout, left)));
   } catch (e) {
     // Cut short by the call's budget rather than by a slow server: say so.
     if (left < timeout && e instanceof Error && e.name === "TimeoutError") throw new Error("out of time");
     throw e;
   }
+}
+
+/** GET (or the given method) with a timeout; non-2xx answers throw HttpError. */
+export async function get(url: string, deps: Deps, init?: RequestInit): Promise<string> {
+  return budgeted(deps, async (signal) => {
+    const res = await deps.fetch(url, { ...init, signal });
+    if (!res.ok) throw await httpError(res);
+    return await res.text();
+  });
+}
+
+/** sized: `bytes` is the size the server declared; otherwise it is only what was read before the cut. */
+export type Capped = { text: string; type: string; bytes: number; cut: boolean; sized: boolean };
+
+/**
+ * Like `get`, but reads at most maxBytes of the body, so a huge file costs no more than its first part.
+ * `type` is the Content-Type.
+ */
+export async function getCapped(url: string, deps: Deps, init: RequestInit, maxBytes: number): Promise<Capped> {
+  return budgeted(deps, async (signal) => {
+    const res = await deps.fetch(url, { ...init, signal });
+    if (!res.ok) throw await httpError(res);
+    const type = res.headers.get("content-type") ?? "";
+    const declared = Number(res.headers.get("content-length") ?? NaN);
+    const decoder = new TextDecoder();
+    let text = "";
+    let bytes = 0;
+    let cut = false;
+    const reader = res.body?.getReader();
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const room = maxBytes - bytes;
+      bytes += value.byteLength;
+      if (value.byteLength > room) {
+        text += decoder.decode(value.subarray(0, room), { stream: true });
+        cut = true;
+        await reader.cancel();
+        break;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    if (!cut) text += decoder.decode();
+    const sized = Number.isFinite(declared) && declared >= bytes;
+    return { text, type, bytes: sized ? declared : bytes, cut, sized };
+  });
 }
 
 /**
