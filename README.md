@@ -97,7 +97,10 @@ Fine-grained tokens → Generate new token:
   Commit statuses, Contents, Dependabot alerts, Issues, Metadata (added
   automatically), Pull requests. Nothing else, and no account permissions.
   Commit statuses carry Vercel's deployment results; branches are listed and
-  compared through GraphQL, which needs only Contents.
+  compared through GraphQL, which needs only Contents. Private repos answer
+  403 for commits and files without Contents, and for check runs without
+  Checks; without Checks a pull request's CI there comes from commit statuses
+  alone, and the report says `! checks: no access`.
 
 Classic tokens work too but can't be limited to a few repos; prefer the
 fine-grained one.
