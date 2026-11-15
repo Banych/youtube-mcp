@@ -86,5 +86,7 @@ are private). Not yet run on Vercel.
   failed), no token in any line. One unrelated warning from
   `stack_releases`: "2/11 failed", prisma/prisma and facebook/react feeds
   had 10 of 10 entries with no link into the repo's releases. Cause unknown.
+  (Later on 2026-11-15: both repos were renamed on GitHub; see
+  `2026-11-15-stack-renamed-repos.md`.)
 - Hobby keeps runtime logs for one hour: a 60-minute window is refused with
   400, so read them within the hour after a run, with `since: "30m"`.
